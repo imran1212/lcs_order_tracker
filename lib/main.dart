@@ -1069,7 +1069,6 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
         ),
       ),
     );
-  }
             
     Widget _field({
     required TextEditingController controller,
