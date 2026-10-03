@@ -16,43 +16,25 @@ class LcsOrderTrackerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'LCS Order Tracker',
+      title: 'LCS Tracker',
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: 'Roboto',
-        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF1769E0),
           brightness: Brightness.light,
         ),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
       home: const LoginScreen(),
     );
   }
 }
 
-class Order {
-  String customer;
-  String cn;
-  String product;
-  double amount;
-  String status;
+// ============================================================
+// LOGIN
+// ============================================================
 
-  Order({
-    required this.customer,
-    required this.cn,
-    required this.product,
-    required this.amount,
-    required this.status,
-  });
-}
-
-class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
-
-  @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
-}
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -64,119 +46,99 @@ class _LoginScreenState extends State<LoginScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
 
-  bool isLoading = false;
-  bool obscurePassword = true;
+  bool loading = false;
+  bool hidePassword = true;
 
   Future<void> login() async {
-  if (emailController.text.trim().isEmpty ||
-      passwordController.text.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Email/Username aur password enter karein'),
-      ),
-    );
-    return;
-  }
+    final email = emailController.text.trim();
+    final password = passwordController.text;
 
-  setState(() => isLoading = true);
-
-  try {
-    final loginEmail = emailController.text.trim();
-
-    final credential =
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-      email: loginEmail,
-      password: passwordController.text,
-    );
-
-    final user = credential.user;
-
-    if (user == null) {
-      throw Exception('User login nahi hua');
-    }
-
-    // Firestore se user profile check
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-
-    if (!userDoc.exists) {
-      await FirebaseAuth.instance.signOut();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('User profile nahi mila'),
-        ),
-      );
+    if (email.isEmpty || password.isEmpty) {
+      showMessage('Email/Username aur password enter karein.');
       return;
     }
 
-    final data = userDoc.data()!;
+    setState(() => loading = true);
 
-    final bool active = data['active'] == true;
-    final String role = data['role']?.toString() ?? 'worker';
+    try {
+      final credential =
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    if (!active) {
-      await FirebaseAuth.instance.signOut();
+      final uid = credential.user?.uid;
+
+      if (uid == null) {
+        throw Exception('User login nahi hua.');
+      }
+
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+
+      if (!userDoc.exists) {
+        await FirebaseAuth.instance.signOut();
+        showMessage('User profile nahi mila.');
+        return;
+      }
+
+      final data = userDoc.data() ?? {};
+
+      final active = data['active'] == true;
+
+      if (!active) {
+        await FirebaseAuth.instance.signOut();
+        showMessage('Aapka account disabled hai.');
+        return;
+      }
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Aapka account disabled hai'),
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(
+            userData: data,
+          ),
         ),
       );
-      return;
-    }
+    } on FirebaseAuthException catch (e) {
+      String message = 'Login failed';
 
-    if (!mounted) return;
+      if (e.code == 'invalid-credential') {
+        message = 'Email ya password ghalat hai.';
+      } else if (e.code == 'user-not-found') {
+        message = 'User nahi mila.';
+      } else if (e.code == 'wrong-password') {
+        message = 'Password ghalat hai.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Email format ghalat hai.';
+      } else if (e.code == 'too-many-requests') {
+        message = 'Bohat zyada attempts. Thori dair baad try karein.';
+      }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const DashboardScreen(),
-      ),
-    );
-
-  } on FirebaseAuthException catch (e) {
-    String message = 'Login failed';
-
-    if (e.code == 'invalid-credential') {
-      message = 'Email/Password ghalat hai';
-    } else if (e.code == 'user-not-found') {
-      message = 'User nahi mila';
-    } else if (e.code == 'wrong-password') {
-      message = 'Password ghalat hai';
-    } else if (e.code == 'invalid-email') {
-      message = 'Email format ghalat hai';
-    } else if (e.code == 'too-many-requests') {
-      message = 'Bohat zyada attempts. Thori dair baad try karein';
-    }
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-
-  } catch (e) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Kuch error aa gaya. Dobara try karein.'),
-      ),
-    );
-
-  } finally {
-    if (mounted) {
-      setState(() => isLoading = false);
+      showMessage(message);
+    } catch (e) {
+      showMessage('Kuch error aa gaya. Dobara try karein.');
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
     }
   }
+
+  void showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+      );
   }
+
   @override
   void dispose() {
     emailController.dispose();
@@ -187,48 +149,69 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height - 48,
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.local_shipping_rounded,
-                  size: 70,
-                  color: Color(0xFF1769E0),
+                Container(
+                  width: 82,
+                  height: 82,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1769E0),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF1769E0).withOpacity(.25),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.local_shipping_rounded,
+                    color: Colors.white,
+                    size: 46,
+                  ),
                 ),
-                const SizedBox(height: 16),
+
+                const SizedBox(height: 24),
 
                 const Text(
                   'LCS Tracker',
                   style: TextStyle(
                     fontSize: 30,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
 
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
 
-                const Text(
-                  'Login to continue',
+                Text(
+                  'Manage your courier orders',
                   style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey,
+                    fontSize: 15,
+                    color: Colors.grey.shade600,
                   ),
                 ),
 
-                const SizedBox(height: 35),
+                const SizedBox(height: 38),
 
                 TextField(
                   controller: emailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
-                    labelText: 'Email',
-                    prefixIcon: const Icon(Icons.email_outlined),
+                    labelText: 'Email / Username',
+                    prefixIcon:
+                        const Icon(Icons.person_outline_rounded),
+                    filled: true,
+                    fillColor: Colors.white,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
                     ),
                   ),
                 ),
@@ -237,24 +220,28 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 TextField(
                   controller: passwordController,
-                  obscureText: obscurePassword,
+                  obscureText: hidePassword,
                   decoration: InputDecoration(
                     labelText: 'Password',
-                    prefixIcon: const Icon(Icons.lock_outline),
+                    prefixIcon:
+                        const Icon(Icons.lock_outline_rounded),
                     suffixIcon: IconButton(
-                      icon: Icon(
-                        obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                      ),
                       onPressed: () {
                         setState(() {
-                          obscurePassword = !obscurePassword;
+                          hidePassword = !hidePassword;
                         });
                       },
+                      icon: Icon(
+                        hidePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
                     ),
+                    filled: true,
+                    fillColor: Colors.white,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
                     ),
                   ),
                 ),
@@ -263,17 +250,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 SizedBox(
                   width: double.infinity,
-                  height: 52,
+                  height: 56,
                   child: ElevatedButton(
-                    onPressed: isLoading ? null : login,
+                    onPressed: loading ? null : login,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1769E0),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(16),
                       ),
                     ),
-                    child: isLoading
+                    child: loading
                         ? const CircularProgressIndicator(
                             color: Colors.white,
                           )
@@ -281,9 +268,19 @@ class _LoginScreenState extends State<LoginScreen> {
                             'LOGIN',
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                Text(
+                  'Secure Worker & Admin Access',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -294,90 +291,63 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-class _DashboardScreenState extends State<DashboardScreen> {
-  final TextEditingController searchController = TextEditingController();
 
-  final List<Order> orders = [
-    Order(
-      customer: 'Ahmed Khan',
-      cn: '123456789',
-      product: 'Herbal Hair Oil',
-      amount: 2499,
-      status: 'In Transit',
-    ),
-    Order(
-      customer: 'Sana Ali',
-      cn: '987654321',
-      product: 'Women Wear',
-      amount: 3999,
-      status: 'Out for Delivery',
-    ),
-    Order(
-      customer: 'Usman Memon',
-      cn: '456789123',
-      product: 'Achar 3KG Deal',
-      amount: 3300,
-      status: 'Delivered',
-    ),
-  ];
+// ============================================================
+// DASHBOARD
+// ============================================================
 
-  String searchText = '';
+class DashboardScreen extends StatefulWidget {
+  final Map<String, dynamic> userData;
+
+  const DashboardScreen({
+    super.key,
+    required this.userData,
+  });
 
   @override
-  void dispose() {
-    searchController.dispose();
-    super.dispose();
-  }
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
 
-  List<Order> get filteredOrders {
-    if (searchText.trim().isEmpty) {
-      return orders;
-    }
+class _DashboardScreenState extends State<DashboardScreen> {
+  String searchText = '';
 
-    final query = searchText.toLowerCase();
+  String get role =>
+      (widget.userData['role'] ?? 'worker').toString();
 
-    return orders.where((order) {
-      return order.customer.toLowerCase().contains(query) ||
-          order.cn.toLowerCase().contains(query) ||
-          order.product.toLowerCase().contains(query);
-    }).toList();
-  }
+  bool get isAdmin => role == 'admin';
 
-  int countStatus(String status) {
-    return orders.where((order) => order.status == status).length;
-  }
+  String get workerUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
-  void addOrder(Order order) {
-    setState(() {
-      orders.insert(0, order);
-    });
-  }
+  Future<void> logout() async {
+    await FirebaseAuth.instance.signOut();
 
-  void openAddOrder() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) {
-        return AddOrderSheet(onAdd: addOrder);
-      },
+    if (!mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const LoginScreen(),
+      ),
+      (route) => false,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final total = orders.length;
-    final transit = countStatus('In Transit');
-    final outForDelivery = countStatus('Out for Delivery');
-    final delivered = countStatus('Delivered');
-    final returned = countStatus('Returned');
+    final ordersQuery = isAdmin
+        ? FirebaseFirestore.instance
+            .collection('orders')
+            .orderBy('createdAt', descending: true)
+        : FirebaseFirestore.instance
+            .collection('orders')
+            .where('workerUid', isEqualTo: workerUid)
+            .orderBy('createdAt', descending: true);
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0,
         surfaceTintColor: Colors.white,
-        titleSpacing: 20,
+        elevation: 0,
         title: Row(
           children: [
             Container(
@@ -390,7 +360,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: const Icon(
                 Icons.local_shipping_rounded,
                 color: Colors.white,
-                size: 24,
               ),
             ),
             const SizedBox(width: 12),
@@ -401,7 +370,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   'LCS Tracker',
                   style: TextStyle(
                     fontSize: 19,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 Text(
@@ -409,7 +378,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   style: TextStyle(
                     fontSize: 11,
                     color: Colors.grey,
-                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
@@ -418,159 +386,144 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         actions: [
           IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_rounded),
+            onPressed: logout,
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'Logout',
           ),
-          const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          await Future.delayed(const Duration(milliseconds: 500));
-          setState(() {});
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: ordersQuery.snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Orders load nahi ho rahe.\n\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+
+          final orders = docs
+              .map((doc) => OrderData.fromFirestore(doc))
+              .where((order) {
+            final q = searchText.toLowerCase().trim();
+
+            if (q.isEmpty) return true;
+
+            return order.customer.toLowerCase().contains(q) ||
+                order.cn.toLowerCase().contains(q) ||
+                order.destination.toLowerCase().contains(q);
+          }).toList();
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
+              await Future.delayed(
+                const Duration(milliseconds: 500),
+              );
+            },
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+              children: [
+                _welcomeCard(),
+                const SizedBox(height: 16),
+
+                _statsRow(docs),
+
+                const SizedBox(height: 22),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Your Orders',
+                      style: TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      '${orders.length}',
+                      style: const TextStyle(
+                        color: Color(0xFF1769E0),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+
+                TextField(
+                  onChanged: (value) {
+                    setState(() {
+                      searchText = value;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search customer, CN or destination...',
+                    prefixIcon:
+                        const Icon(Icons.search_rounded),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 14),
+
+                if (orders.isEmpty)
+                  _emptyState()
+                else
+                  ...orders.map(
+                    (order) => _orderCard(order),
+                  ),
+              ],
+            ),
+          );
         },
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 110),
-          children: [
-            _welcomeCard(),
-            const SizedBox(height: 18),
-
-            const Text(
-              'Overview',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.55,
-              children: [
-                _statCard(
-                  title: 'Total Orders',
-                  value: '$total',
-                  icon: Icons.inventory_2_rounded,
-                  color: const Color(0xFF1769E0),
-                ),
-                _statCard(
-                  title: 'In Transit',
-                  value: '$transit',
-                  icon: Icons.local_shipping_rounded,
-                  color: const Color(0xFF7B61FF),
-                ),
-                _statCard(
-                  title: 'Out for Delivery',
-                  value: '$outForDelivery',
-                  icon: Icons.delivery_dining_rounded,
-                  color: const Color(0xFFFF8A00),
-                ),
-                _statCard(
-                  title: 'Delivered',
-                  value: '$delivered',
-                  icon: Icons.check_circle_rounded,
-                  color: const Color(0xFF16A36A),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            Row(
-              children: [
-                Expanded(
-                  child: _smallStatusCard(
-                    'Returned',
-                    '$returned',
-                    Icons.keyboard_return_rounded,
-                    const Color(0xFFE5484D),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _smallStatusCard(
-                    'API Sync',
-                    'Ready',
-                    Icons.sync_rounded,
-                    const Color(0xFF1769E0),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Your Orders',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () {},
-                  child: const Text('View All'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 8),
-
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: TextField(
-                controller: searchController,
-                onChanged: (value) {
-                  setState(() {
-                    searchText = value;
-                  });
-                },
-                decoration: const InputDecoration(
-                  hintText: 'Search customer, CN or product...',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 15,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 14),
-
-            if (filteredOrders.isEmpty)
-              _emptyState()
-            else
-              ...filteredOrders.map(_orderCard),
-          ],
-        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: openAddOrder,
+        onPressed: () {
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (_) => AddOrderSheet(
+              workerUid: workerUid,
+            ),
+          );
+        },
         backgroundColor: const Color(0xFF1769E0),
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add_rounded),
         label: const Text(
           'Add Order',
-          style: TextStyle(fontWeight: FontWeight.w700),
+          style: TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
     );
   }
 
   Widget _welcomeCard() {
+    final name =
+        (widget.userData['name'] ?? role).toString();
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -589,40 +542,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-      child: const Row(
+      child: Row(
         children: [
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Good afternoon 👋',
+                  'Welcome 👋',
                   style: TextStyle(
-                    color: Colors.white70,
+                    color: Colors.white.withOpacity(.75),
                     fontSize: 13,
                   ),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 5),
                 Text(
-                  'Track your shipments',
-                  style: TextStyle(
+                  name,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 Text(
-                  'Manage all your LCS orders in one place.',
+                  isAdmin
+                      ? 'Admin Dashboard'
+                      : 'Worker Dashboard',
                   style: TextStyle(
-                    color: Colors.white70,
+                    color: Colors.white.withOpacity(.85),
                     fontSize: 12,
                   ),
                 ),
               ],
             ),
           ),
-          Icon(
+          const Icon(
             Icons.local_shipping_rounded,
             color: Colors.white,
             size: 54,
@@ -632,52 +588,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _statCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(19),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withOpacity(.10),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(icon, color: color, size: 21),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Colors.grey,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
+  Widget _statsRow(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    int delivered = 0;
+    int inTransit = 0;
+    int outForDelivery = 0;
+    int returned = 0;
+
+    for (final doc in docs) {
+      final status =
+          (doc.data()['status'] ?? '').toString();
+
+      if (status == 'Delivered') {
+        delivered++;
+      } else if (status == 'In Transit') {
+        inTransit++;
+      } else if (status == 'Out for Delivery') {
+        outForDelivery++;
+      } else if (status == 'Returned') {
+        returned++;
+      }
+    }
+
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: 1.65,
+      children: [
+        _statCard(
+          'Total Orders',
+          docs.length.toString(),
+          Icons.inventory_2_rounded,
+          const Color(0xFF1769E0),
+        ),
+        _statCard(
+          'In Transit',
+          inTransit.toString(),
+          Icons.local_shipping_rounded,
+          const Color(0xFF7B61FF),
+        ),
+        _statCard(
+          'Out for Delivery',
+          outForDelivery.toString(),
+          Icons.delivery_dining_rounded,
+          const Color(0xFFFF9800),
+        ),
+        _statCard(
+          'Delivered',
+          delivered.toString(),
+          Icons.check_circle_rounded,
+          const Color(0xFF16A36A),
+        ),
+      ],
     );
   }
 
-  Widget _smallStatusCard(
+  Widget _statCard(
     String title,
     String value,
     IconData icon,
@@ -687,38 +656,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(17),
+        borderRadius: BorderRadius.circular(19),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 25),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey,
-                ),
-              ),
-            ],
+          Icon(icon, color: color, size: 24),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _orderCard(Order order) {
-    final statusColor = _statusColor(order.status);
+  Widget _orderCard(OrderData order) {
+    final color = statusColor(order.status);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -729,158 +698,189 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1769E0).withOpacity(.08),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(
-                  Icons.inventory_2_rounded,
-                  color: Color(0xFF1769E0),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      order.customer,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'CN: ${order.cn}',
-                      style: const TextStyle(
-                        color: Colors.grey,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _statusBadge(order.status, statusColor),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Divider(height: 1),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _orderInfo(
-                  Icons.shopping_bag_outlined,
-                  order.product,
-                ),
-              ),
-              _orderInfo(
-                Icons.payments_outlined,
-                'Rs. ${order.amount.toStringAsFixed(0)}',
-              ),
-            ],
-          ),
-        ],
+  Row(
+    children: [
+      Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1769E0).withOpacity(.08),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: const Icon(
+          Icons.inventory_2_rounded,
+          color: Color(0xFF1769E0),
+        ),
       ),
-    );
-  }
-
-  Widget _orderInfo(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, size: 17, color: Colors.grey),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            text,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              order.customer,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
             ),
+            const SizedBox(height: 3),
+            Text(
+              'CN: ${order.cn}',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+      _statusBadge(order.status, color),
+    ],
+  ),
+
+  const SizedBox(height: 14),
+  const Divider(height: 1),
+  const SizedBox(height: 12),
+
+  Row(
+    children: [
+      Expanded(
+        child: _orderInfo(
+          Icons.shopping_bag_outlined,
+          order.product,
+        ),
+      ),
+      Expanded(
+        child: _orderInfo(
+          Icons.payments_outlined,
+          'Rs. ${order.amount.toStringAsFixed(0)}',
+        ),
+      ),
+    ],
+  ),
+
+  const SizedBox(height: 8),
+
+  Row(
+    children: [
+      Expanded(
+        child: _orderInfo(
+          Icons.location_on_outlined,
+          order.destination,
+        ),
+      ),
+      Expanded(
+        child: _orderInfo(
+          Icons.person_outline_rounded,
+          order.workerName.isEmpty
+              ? 'Worker'
+              : order.workerName,
+        ),
+      ),
+    ],
+  ),
+],        ),
+      ],
+    ),
+  );
+}
+
+Widget _orderInfo(IconData icon, String text) {
+  return Row(
+    children: [
+      Icon(
+        icon,
+        size: 17,
+        color: Colors.grey.shade600,
+      ),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _statusBadge(String status, Color color) {
+  return Container(
+    padding: const EdgeInsets.symmetric(
+      horizontal: 9,
+      vertical: 6,
+    ),
+    decoration: BoxDecoration(
+      color: color.withOpacity(.10),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      status,
+      style: TextStyle(
+        color: color,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
+}
+
+Widget _emptyState() {
+  return Container(
+    padding: const EdgeInsets.all(35),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(19),
+    ),
+    child: Column(
+      children: [
+        Icon(
+          Icons.inventory_2_outlined,
+          size: 50,
+          color: Colors.grey.shade400,
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'No orders found',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Add your first LCS order.',
+          style: TextStyle(
+            color: Colors.grey.shade600,
           ),
         ),
       ],
-    );
-  }
-
-  Widget _statusBadge(String status, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 9,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        color: color.withOpacity(.10),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        status,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
-
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'Delivered':
-        return const Color(0xFF16A36A);
-      case 'Out for Delivery':
-        return const Color(0xFFFF8A00);
-      case 'Returned':
-        return const Color(0xFFE5484D);
-      default:
-        return const Color(0xFF7B61FF);
-    }
-  }
-
-  Widget _emptyState() {
-    return Container(
-      padding: const EdgeInsets.all(35),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(19),
-      ),
-      child: const Column(
-        children: [
-          Icon(
-            Icons.search_off_rounded,
-            size: 48,
-            color: Colors.grey,
-          ),
-          SizedBox(height: 10),
-          Text(
-            'No orders found',
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: 4),
-          Text(
-            'Try another search.',
-            style: TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }
 
-class AddOrderSheet extends StatefulWidget {
-  final Function(Order) onAdd;
+Color statusColor(String status) {
+  switch (status) {
+    case 'Delivered':
+      return const Color(0xFF16A36A);
+    case 'Out for Delivery':
+      return const Color(0xFFFF9800);
+    case 'Returned':
+      return const Color(0xFFE5484D);
+    default:
+      return const Color(0xFF1769E0);
+  }
+}
+  class AddOrderSheet extends StatefulWidget {
+  final Function(OrderData) onAdd;
 
   const AddOrderSheet({
     super.key,
@@ -896,6 +896,8 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   final cnController = TextEditingController();
   final productController = TextEditingController();
   final amountController = TextEditingController();
+  final destinationController = TextEditingController();
+  final workerController = TextEditingController();
 
   String status = 'In Transit';
 
@@ -905,6 +907,8 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     cnController.dispose();
     productController.dispose();
     amountController.dispose();
+    destinationController.dispose();
+    workerController.dispose();
     super.dispose();
   }
 
@@ -923,7 +927,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
         double.tryParse(amountController.text.trim()) ?? 0;
 
     widget.onAdd(
-      Order(
+      OrderData(
         customer: customerController.text.trim(),
         cn: cnController.text.trim(),
         product: productController.text.trim().isEmpty
@@ -931,13 +935,14 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
             : productController.text.trim(),
         amount: amount,
         status: status,
+        destination: destinationController.text.trim(),
+        workerName: workerController.text.trim(),
       ),
     );
 
     Navigator.pop(context);
   }
-
-  @override
+    @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
 
@@ -978,16 +983,19 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
               label: 'Customer Name',
               icon: Icons.person_outline_rounded,
             ),
+
             _field(
               controller: cnController,
               label: 'LCS CN Number',
               icon: Icons.qr_code_2_rounded,
             ),
+
             _field(
               controller: productController,
               label: 'Product',
               icon: Icons.shopping_bag_outlined,
             ),
+
             _field(
               controller: amountController,
               label: 'COD Amount',
@@ -995,7 +1003,18 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
               keyboardType: TextInputType.number,
             ),
 
-            DropdownButtonFormField<String>(
+            _field(
+              controller: destinationController,
+              label: 'Destination',
+              icon: Icons.location_on_outlined,
+            ),
+
+            _field(
+              controller: workerController,
+              label: 'Worker Name',
+              icon: Icons.person_outline_rounded,
+            ),
+                    DropdownButtonFormField<String>(
               value: status,
               decoration: InputDecoration(
                 labelText: 'Status',
@@ -1012,7 +1031,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
                 'Delivered',
                 'Returned',
               ].map((item) {
-                return DropdownMenuItem(
+                return DropdownMenuItem<String>(
                   value: item,
                   child: Text(item),
                 );
@@ -1025,9 +1044,6 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
                 }
               },
             ),
-
-            const SizedBox(height: 20),
-
             SizedBox(
               width: double.infinity,
               height: 54,
@@ -1054,8 +1070,8 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
       ),
     );
   }
-
-  Widget _field({
+            
+    Widget _field({
     required TextEditingController controller,
     required String label,
     required IconData icon,
