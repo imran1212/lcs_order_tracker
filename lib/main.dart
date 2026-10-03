@@ -879,12 +879,76 @@ Color statusColor(String status) {
       return const Color(0xFF1769E0);
   }
 }
-  class AddOrderSheet extends StatefulWidget {
-  final Function(OrderData) onAdd;
+
+class OrderData {
+  final String customer;
+  final String cn;
+  final String product;
+  final double amount;
+  final String status;
+  final String destination;
+  final String workerName;
+  final String workerUid;
+
+  const OrderData({
+    required this.customer,
+    required this.cn,
+    required this.product,
+    required this.amount,
+    required this.status,
+    required this.destination,
+    required this.workerName,
+    this.workerUid = '',
+  });
+
+  factory OrderData.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? {};
+
+    return OrderData(
+      customer: (data['customer'] ?? '').toString(),
+      cn: (data['cn'] ?? '').toString(),
+      product: (data['product'] ?? 'Not specified').toString(),
+      amount: (data['amount'] as num?)?.toDouble() ?? 0,
+      status: (data['status'] ?? 'In Transit').toString(),
+      destination: (data['destination'] ?? '').toString(),
+      workerName: (data['workerName'] ?? '').toString(),
+      workerUid: (data['workerUid'] ?? '').toString(),
+    );
+  }
+}
+
+Widget _field({
+  required TextEditingController controller,
+  required String label,
+  required IconData icon,
+  TextInputType? keyboardType,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 13),
+    child: TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    ),
+  );
+}
+
+class AddOrderSheet extends StatefulWidget {
+  final String workerUid;
 
   const AddOrderSheet({
     super.key,
-    required this.onAdd,
+    required this.workerUid,
   });
 
   @override
@@ -912,7 +976,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     super.dispose();
   }
 
-  void save() {
+  Future<void> save() async {
     if (customerController.text.trim().isEmpty ||
         cnController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -926,23 +990,33 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     final amount =
         double.tryParse(amountController.text.trim()) ?? 0;
 
-    widget.onAdd(
-      OrderData(
-        customer: customerController.text.trim(),
-        cn: cnController.text.trim(),
-        product: productController.text.trim().isEmpty
+    try {
+      await FirebaseFirestore.instance.collection('orders').add({
+        'customer': customerController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty
             ? 'Not specified'
             : productController.text.trim(),
-        amount: amount,
-        status: status,
-        destination: destinationController.text.trim(),
-        workerName: workerController.text.trim(),
-      ),
-    );
+        'amount': amount,
+        'status': status,
+        'destination': destinationController.text.trim(),
+        'workerName': workerController.text.trim(),
+        'workerUid': widget.workerUid,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
-    Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order save nahi hua: $e')),
+      );
+    }
   }
-    @override
+
+  @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
 
@@ -1069,4 +1143,6 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
         ),
       ),
     );
+}
+
 }
