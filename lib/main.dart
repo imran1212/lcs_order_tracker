@@ -68,65 +68,115 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscurePassword = true;
 
   Future<void> login() async {
-    if (emailController.text.trim().isEmpty ||
-        passwordController.text.isEmpty) {
+  if (emailController.text.trim().isEmpty ||
+      passwordController.text.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Email/Username aur password enter karein'),
+      ),
+    );
+    return;
+  }
+
+  setState(() => isLoading = true);
+
+  try {
+    final loginEmail = emailController.text.trim();
+
+    final credential =
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: loginEmail,
+      password: passwordController.text,
+    );
+
+    final user = credential.user;
+
+    if (user == null) {
+      throw Exception('User login nahi hua');
+    }
+
+    // Firestore se user profile check
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (!userDoc.exists) {
+      await FirebaseAuth.instance.signOut();
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Email aur password enter karein'),
+          content: Text('User profile nahi mila'),
         ),
       );
       return;
     }
 
-    setState(() => isLoading = true);
+    final data = userDoc.data()!;
 
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text,
-      );
+    final bool active = data['active'] == true;
+    final String role = data['role']?.toString() ?? 'worker';
 
-      if (!mounted) return;
+    if (!active) {
+      await FirebaseAuth.instance.signOut();
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const DashboardScreen(),
-        ),
-      );
-    } on FirebaseAuthException catch (e) {
-      String message = 'Login failed';
-
-      if (e.code == 'invalid-credential') {
-        message = 'Email ya password ghalat hai';
-      } else if (e.code == 'user-not-found') {
-        message = 'User nahi mila';
-      } else if (e.code == 'wrong-password') {
-        message = 'Password ghalat hai';
-      } else if (e.code == 'invalid-email') {
-        message = 'Email format ghalat hai';
-      }
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-    } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Kuch error aa gaya. Dobara try karein.'),
+          content: Text('Aapka account disabled hai'),
         ),
       );
-    } finally {
-      if (mounted) {
-        setState(() => isLoading = false);
-      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DashboardScreen(),
+      ),
+    );
+
+  } on FirebaseAuthException catch (e) {
+    String message = 'Login failed';
+
+    if (e.code == 'invalid-credential') {
+      message = 'Email/Password ghalat hai';
+    } else if (e.code == 'user-not-found') {
+      message = 'User nahi mila';
+    } else if (e.code == 'wrong-password') {
+      message = 'Password ghalat hai';
+    } else if (e.code == 'invalid-email') {
+      message = 'Email format ghalat hai';
+    } else if (e.code == 'too-many-requests') {
+      message = 'Bohat zyada attempts. Thori dair baad try karein';
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Kuch error aa gaya. Dobara try karein.'),
+      ),
+    );
+
+  } finally {
+    if (mounted) {
+      setState(() => isLoading = false);
     }
   }
-
+  }
   @override
   void dispose() {
     emailController.dispose();
