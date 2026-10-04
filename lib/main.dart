@@ -86,7 +86,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final data = userDoc.data() ?? {};
 
-      final active = data['active'] == true;
+      final activeValue = data['active'];
+final active = activeValue == true ||
+    activeValue.toString().toLowerCase() == 'true';
 
       if (!active) {
         await FirebaseAuth.instance.signOut();
