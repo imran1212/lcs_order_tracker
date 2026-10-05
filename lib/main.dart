@@ -61,9 +61,33 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => loading = true);
 
     try {
+      // Workers can log in with username; admin can still use email.
+      var loginEmail = email;
+
+      if (!email.contains('@')) {
+        final usernameQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .where('username', isEqualTo: email.toLowerCase())
+            .limit(1)
+            .get();
+
+        if (usernameQuery.docs.isEmpty) {
+          showMessage('Username nahi mila.');
+          return;
+        }
+
+        loginEmail =
+            (usernameQuery.docs.first.data()['email'] ?? '').toString();
+
+        if (loginEmail.isEmpty) {
+          showMessage('Worker profile mein login email nahi hai.');
+          return;
+        }
+      }
+
       final credential =
           await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
+        email: loginEmail,
         password: password,
       );
 
@@ -396,6 +420,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
+          if (isAdmin)
+            IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.admin_panel_settings_rounded),
+              tooltip: 'Admin Panel',
+            ),
           IconButton(
             onPressed: logout,
             icon: const Icon(Icons.logout_rounded),
@@ -880,6 +917,305 @@ Widget _emptyState() {
 // DashboardScreenState yahan complete hota hai.
 // Is brace ke baghair neeche ki classes Dashboard ke andar parse hoti hain,
 // jis se AddOrderSheet / super.key / workerUid ke cascade errors aate hain.
+}
+
+
+class AdminScreen extends StatefulWidget {
+  const AdminScreen({super.key});
+
+  @override
+  State<AdminScreen> createState() => _AdminScreenState();
+}
+
+class _AdminScreenState extends State<AdminScreen> {
+  bool loading = false;
+
+  CollectionReference<Map<String, dynamic>> get users =>
+      FirebaseFirestore.instance.collection('users');
+
+  Future<void> addWorker() async {
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+    final nameController = TextEditingController();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Add Worker'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Worker Name',
+                    prefixIcon: Icon(Icons.person_outline_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: usernameController,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    prefixIcon: Icon(Icons.badge_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Temporary Password',
+                    prefixIcon: Icon(Icons.lock_outline_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Worker login username se hoga. Password baad mein secure reset system se manage karenge.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Create Worker'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != true) {
+      usernameController.dispose();
+      passwordController.dispose();
+      nameController.dispose();
+      return;
+    }
+
+    final username = usernameController.text.trim().toLowerCase();
+    final password = passwordController.text;
+    final name = nameController.text.trim();
+
+    usernameController.dispose();
+    passwordController.dispose();
+    nameController.dispose();
+
+    if (username.isEmpty || password.length < 6 || name.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Name, username aur minimum 6 character password zaroori hai.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!RegExp(r'^[a-z0-9._-]+$').hasMatch(username)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Username mein sirf letters, numbers, dot, _ ya - use karein.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => loading = true);
+
+    FirebaseApp? secondaryApp;
+    try {
+      final existing = Firebase.apps.where((a) => a.name == 'workerCreator').toList();
+      secondaryApp = existing.isNotEmpty
+          ? existing.first
+          : await Firebase.initializeApp(
+              name: 'workerCreator',
+              options: Firebase.app().options,
+            );
+
+      final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
+      final internalEmail = '$username@lcs-tracker.local';
+      final credential = await secondaryAuth.createUserWithEmailAndPassword(
+        email: internalEmail,
+        password: password,
+      );
+
+      final uid = credential.user!.uid;
+
+      await users.doc(uid).set({
+        'name': name,
+        'username': username,
+        'email': internalEmail,
+        'role': 'worker',
+        'active': true,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await secondaryAuth.signOut();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Worker "$username" successfully create ho gaya.')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      var message = 'Worker create nahi hua.';
+      if (e.code == 'email-already-in-use') {
+        message = 'Ye username pehle se use ho raha hai.';
+      } else if (e.code == 'weak-password') {
+        message = 'Password bohat weak hai. Kam az kam 6 characters rakhein.';
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Worker create nahi hua: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> toggleWorker(String uid, bool active) async {
+    try {
+      await users.doc(uid).update({'active': !active});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(!active ? 'Worker enabled.' : 'Worker disabled.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Status update nahi hua: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stream = users
+        .where('role', isEqualTo: 'worker')
+        .snapshots();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Worker Management',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+        actions: [
+          IconButton(
+            onPressed: loading ? null : addWorker,
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            tooltip: 'Add Worker',
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: loading ? null : addWorker,
+        icon: const Icon(Icons.person_add_alt_1_rounded),
+        label: const Text('Add Worker'),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Workers load nahi ho rahe.\n\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Text(
+                'Abhi koi worker nahi hai.\n+ Add Worker se pehla worker banayein.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data();
+              final name = (data['name'] ?? 'Worker').toString();
+              final username = (data['username'] ?? '').toString();
+              final activeValue = data['active'];
+              final active = activeValue == null ||
+                  activeValue == true ||
+                  activeValue.toString().toLowerCase() == 'true';
+
+              return Card(
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFF1769E0).withOpacity(.10),
+                    child: const Icon(
+                      Icons.person_rounded,
+                      color: Color(0xFF1769E0),
+                    ),
+                  ),
+                  title: Text(
+                    name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    '@$username\n${active ? 'Active' : 'Disabled'}',
+                  ),
+                  isThreeLine: true,
+                  trailing: Switch(
+                    value: active,
+                    onChanged: (value) => toggleWorker(doc.id, active),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
 }
 
 Color statusColor(String status) {
