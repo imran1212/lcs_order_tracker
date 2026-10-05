@@ -86,11 +86,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final data = userDoc.data() ?? {};
 
+      // Firestore active flag:
+      // true / "true" = active
+      // false / "false" = disabled
+      // missing/null = active for compatibility with older user documents.
       final activeValue = data['active'];
-final active = activeValue == true ||
-    activeValue.toString().toLowerCase() == 'true';
+      final role = (data['role'] ?? 'worker').toString().trim().toLowerCase();
 
-      if (!active) {
+      final bool active = activeValue == null ||
+          activeValue == true ||
+          activeValue.toString().trim().toLowerCase() == 'true';
+
+      // Admin access remains available if an old admin document has no
+      // active flag. Workers still respect the active/disabled flag.
+      if (!active && role != 'admin') {
         await FirebaseAuth.instance.signOut();
         showMessage('Aapka account disabled hai.');
         return;
