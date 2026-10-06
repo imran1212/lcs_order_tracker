@@ -1305,7 +1305,7 @@ Future<void> _loadWorkerName() async {
   try {
     final doc = await FirebaseFirestore.instance
         .collection('users')
-        .doc(widget.workerId)
+        .doc(widget.workerUid)
         .get();
 
     if (!mounted || !doc.exists) return;
