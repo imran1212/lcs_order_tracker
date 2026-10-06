@@ -61,29 +61,10 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => loading = true);
 
     try {
-      // Workers can log in with username; admin can still use email.
-      var loginEmail = email;
-
-      if (!email.contains('@')) {
-        final usernameQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .where('username', isEqualTo: email.toLowerCase())
-            .limit(1)
-            .get();
-
-        if (usernameQuery.docs.isEmpty) {
-          showMessage('Username nahi mila.');
-          return;
-        }
-
-        loginEmail =
-            (usernameQuery.docs.first.data()['email'] ?? '').toString();
-
-        if (loginEmail.isEmpty) {
-          showMessage('Worker profile mein login email nahi hai.');
-          return;
-        }
-      }
+      // Admin email login + worker username login.
+final loginEmail = email.contains('@')
+    ? email
+    : '${email.toLowerCase()}@lcs-tracker.local';
 
       final credential =
           await FirebaseAuth.instance.signInWithEmailAndPassword(
