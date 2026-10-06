@@ -1294,7 +1294,33 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   final amountController = TextEditingController();
   final destinationController = TextEditingController();
   final workerController = TextEditingController();
+  
+@override
+void initState() {
+  super.initState();
+  _loadWorkerName();
+}
 
+Future<void> _loadWorkerName() async {
+  try {
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.workerId)
+        .get();
+
+    if (!mounted || !doc.exists) return;
+
+    final data = doc.data() ?? {};
+
+    final name = (data['name'] ?? data['username'] ?? '').toString();
+
+    if (name.isNotEmpty) {
+      workerController.text = name;
+    }
+  } catch (_) {
+    // Worker name load fail ho to order save phir bhi continue rahe.
+  }
+}
   String status = 'In Transit';
 
   @override
