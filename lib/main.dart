@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1294,7 +1297,209 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   final amountController = TextEditingController();
   final destinationController = TextEditingController();
   final workerController = TextEditingController();
-  
+
+  final ImagePicker _picker = ImagePicker();
+  final TextRecognizer _textRecognizer =
+      TextRecognizer(script: TextRecognitionScript.latin);
+  final BarcodeScanner _barcodeScanner = BarcodeScanner();
+
+  final List<XFile> _receiptImages = [];
+  bool _ocrLoading = false;
+  String _ocrMessage = '';
+
+  Future<void> _pickReceiptImages() async {
+    try {
+      final images = await _picker.pickMultiImage(imageQuality: 85);
+      if (images.isEmpty) return;
+
+      final selected = images.take(20).toList();
+      setState(() {
+        _receiptImages
+          ..clear()
+          ..addAll(selected);
+        _ocrMessage = '${selected.length} receipt image selected.';
+      });
+
+      await _runOcr();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _ocrMessage = 'Receipt select nahi hui.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Receipt select error: $e')),
+      );
+    }
+  }
+
+  Future<void> _takeReceiptPhoto() async {
+    try {
+      final image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+
+      setState(() {
+        _receiptImages
+          ..clear()
+          ..add(image);
+        _ocrMessage = 'Receipt photo selected.';
+      });
+
+      await _runOcr();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Camera error: $e')),
+      );
+    }
+  }
+
+  Future<void> _runOcr() async {
+    if (_receiptImages.isEmpty) return;
+
+    setState(() {
+      _ocrLoading = true;
+      _ocrMessage = 'Receipt read ho rahi hai...';
+    });
+
+    try {
+      final textParts = <String>[];
+      final barcodeValues = <String>[];
+
+      for (final image in _receiptImages) {
+        final inputImage = InputImage.fromFilePath(image.path);
+
+        try {
+          final recognized =
+              await _textRecognizer.processImage(inputImage);
+          if (recognized.text.trim().isNotEmpty) {
+            textParts.add(recognized.text);
+          }
+        } catch (_) {}
+
+        try {
+          final barcodes = await _barcodeScanner.processImage(inputImage);
+          for (final barcode in barcodes) {
+            final value = barcode.rawValue?.trim();
+            if (value != null && value.isNotEmpty) {
+              barcodeValues.add(value);
+            }
+          }
+        } catch (_) {}
+      }
+
+      final fullText = textParts.join('\n');
+      _fillFieldsFromReceipt(fullText, barcodeValues);
+
+      if (!mounted) return;
+      setState(() {
+        _ocrMessage = fullText.trim().isEmpty
+            ? 'Text read nahi ho saka. Fields manually check karein.'
+            : '${_receiptImages.length} receipt(s) scanned. Fields review karein.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _ocrMessage = 'OCR complete nahi ho saka.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('OCR error: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _ocrLoading = false);
+      }
+    }
+  }
+
+  String _firstMatch(String pattern, String text) {
+    final match = RegExp(
+      pattern,
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(text);
+    return match?.group(1)?.trim() ?? '';
+  }
+
+  void _fillFieldsFromReceipt(
+    String rawText,
+    List<String> barcodeValues,
+  ) {
+    final text = rawText.replaceAll('\r', '');
+    final upper = text.toUpperCase();
+
+    String cn = '';
+    final cnCandidates = <String>[
+      ...RegExp(r'\b[A-Z]{2}\d{8,14}\b').allMatches(upper).map((m) => m.group(0)!),
+      ...barcodeValues.where((v) => RegExp(r'^[A-Za-z]{1,4}\d{7,14}$').hasMatch(v)),
+    ];
+    if (cnCandidates.isNotEmpty) {
+      cn = cnCandidates.first;
+    }
+
+    if (cn.isNotEmpty) {
+      cnController.text = cn;
+    }
+
+    final cod = _firstMatch(
+      r'(?:COD|COLLECT\s*AMOUNT|COLLECT|AMOUNT)\s*[:\-]?\s*(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
+      text,
+    );
+    if (cod.isNotEmpty) {
+      amountController.text = cod.replaceAll(',', '');
+    }
+
+    final customer = _firstMatch(
+      r'(?:CONSIGNEE(?:\s*NAME)?|RECEIVER(?:\s*NAME)?|CUSTOMER(?:\s*NAME)?)\s*[:\-]?\s*([^\n]+)',
+      text,
+    );
+    if (customer.isNotEmpty) {
+      customerController.text = _cleanOcrValue(customer);
+    }
+
+    final destination = _firstMatch(
+      r'(?:DESTINATION(?:\s*CITY)?|DESTINATION\s*CITY\s*NAME)\s*[:\-]?\s*([^\n]+)',
+      text,
+    );
+    if (destination.isNotEmpty) {
+      destinationController.text = _cleanOcrValue(destination);
+    }
+
+    final product = _firstMatch(
+      r'(?:PRODUCT|SPECIAL\s*INSTRUCTIONS?|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
+      text,
+    );
+    if (product.isNotEmpty) {
+      productController.text = _cleanOcrValue(product);
+    }
+
+    if (productController.text.trim().isEmpty) {
+      final specialIndex =
+          upper.indexOf('SPECIAL INSTRUCTION');
+      if (specialIndex >= 0) {
+        final tail = text.substring(specialIndex);
+        final lines = tail
+            .split('\n')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (lines.length > 1) {
+          productController.text =
+              _cleanOcrValue(lines[1].replaceFirst(':', '').trim());
+        }
+      }
+    }
+  }
+
+  String _cleanOcrValue(String value) {
+    return value
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'^[\s:\-]+|[\s]+$'), '')
+        .trim();
+  }
+
 @override
 void initState() {
   super.initState();
@@ -1331,6 +1536,8 @@ Future<void> _loadWorkerName() async {
     amountController.dispose();
     destinationController.dispose();
     workerController.dispose();
+    _textRecognizer.close();
+    _barcodeScanner.close();
     super.dispose();
   }
 
@@ -1409,6 +1616,96 @@ Future<void> _loadWorkerName() async {
               ),
             ),
             const SizedBox(height: 18),
+
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1769E0).withOpacity(.06),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF1769E0).withOpacity(.12),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.document_scanner_rounded,
+                        color: Color(0xFF1769E0),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Scan LCS Receipt',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '1–20 receipts select karein. App CN, COD, customer aur destination read karke fields fill karegi.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _pickReceiptImages,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Gallery'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('Camera'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_ocrLoading) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (_ocrMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _ocrMessage,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_receiptImages.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1769E0),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
 
             _field(
               controller: customerController,
