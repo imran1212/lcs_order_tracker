@@ -783,7 +783,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
-                    if (widget.isAdmin) ...[
+                    if (isAdmin) ...[
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String>(
