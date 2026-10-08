@@ -330,10 +330,21 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   String searchText = '';
   String statusFilter = 'All';
+  String dateFilterType = 'Booking Date';
+  String workerFilter = 'All';
   DateTime? dateFrom;
   DateTime? dateTo;
 
-  DateTime? _orderDate(OrderData order) => order.bookingDate;
+  DateTime? _orderDate(OrderData order) {
+    switch (dateFilterType) {
+      case 'Status Date':
+        return order.statusDate;
+      case 'Delivery Date':
+        return order.deliveryDate;
+      default:
+        return order.bookingDate;
+    }
+  }
 
   String get role =>
       (widget.userData['role'] ?? 'worker').toString();
@@ -464,7 +475,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final matchesStatus = statusFilter == 'All' ||
                 order.status == statusFilter;
 
-            final orderDate = order.bookingDate;
+            final matchesWorker = workerFilter == 'All' ||
+                order.workerUid == workerFilter;
+
+            final orderDate = _orderDate(order);
             final normalizedOrderDate = orderDate == null
                 ? null
                 : DateTime(orderDate.year, orderDate.month, orderDate.day);
@@ -482,7 +496,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 (normalizedOrderDate != null &&
                     !normalizedOrderDate.isAfter(normalizedTo));
 
-            return matchesSearch && matchesStatus && matchesFrom && matchesTo;
+            return matchesSearch && matchesStatus && matchesWorker && matchesFrom && matchesTo;
           }).toList();
 
           return RefreshIndicator(
@@ -594,7 +608,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
 
-                if (dateFrom != null || dateTo != null || statusFilter != 'All')
+                const SizedBox(height: 10),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: dateFilterType,
+                        decoration: InputDecoration(
+                          labelText: 'Date Basis',
+                          prefixIcon: const Icon(Icons.event_note_rounded),
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        items: const [
+                          'Booking Date',
+                          'Status Date',
+                          'Delivery Date',
+                        ].map((item) => DropdownMenuItem<String>(
+                          value: item,
+                          child: Text(item, overflow: TextOverflow.ellipsis),
+                        )).toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() => dateFilterType = value);
+                        },
+                      ),
+                    ),
+                    if (isAdmin) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: workerFilter,
+                          decoration: InputDecoration(
+                            labelText: 'Worker',
+                            prefixIcon: const Icon(Icons.person_search_rounded),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: 'All',
+                              child: Text('All Workers'),
+                            ),
+                            ..._workerFilterItems(docs),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() => workerFilter = value);
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+
+                if (dateFrom != null || dateTo != null || statusFilter != 'All' || workerFilter != 'All')
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton.icon(
@@ -603,6 +680,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           dateFrom = null;
                           dateTo = null;
                           statusFilter = 'All';
+                          workerFilter = 'All';
+                          dateFilterType = 'Booking Date';
                         });
                       },
                       icon: const Icon(Icons.clear_rounded, size: 18),
@@ -645,6 +724,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  List<DropdownMenuItem<String>> _workerFilterItems(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final workers = <String, String>{};
+    for (final doc in docs) {
+      final data = doc.data();
+      final uid = (data['workerUid'] ?? '').toString();
+      final name = (data['workerName'] ?? '').toString().trim();
+      if (uid.isNotEmpty) {
+        workers[uid] = name.isEmpty ? uid : name;
+      }
+    }
+
+    final entries = workers.entries.toList()
+      ..sort((a, b) => a.value.toLowerCase().compareTo(b.value.toLowerCase()));
+
+    return entries.map((entry) {
+      return DropdownMenuItem<String>(
+        value: entry.key,
+        child: Text(entry.value, overflow: TextOverflow.ellipsis),
+      );
+    }).toList();
+  }
+
   Future<void> _pickDateRange() async {
     final picked = await showDateRangePicker(
       context: context,
@@ -664,7 +766,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String _dateFilterLabel() {
-    if (dateFrom == null && dateTo == null) return 'Date';
+    if (dateFrom == null && dateTo == null) return dateFilterType.replaceAll(' Date', '');
     if (dateFrom != null && dateTo != null) {
       return '${_shortDate(dateFrom!)} - ${_shortDate(dateTo!)}';
     }
@@ -1709,9 +1811,10 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     return _cleanOcrValue(value)
         .replaceAll(RegExp(r'[\)\(]+'), ' ')
         .replaceAll(RegExp(
-          r'\s*(?:OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
+          r'\s*(?:KINDLY|CAREFULLY|SO\s+PARCEL|PARCEL\s+WITH|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
           caseSensitive: false,
         ), '')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
   }
 
