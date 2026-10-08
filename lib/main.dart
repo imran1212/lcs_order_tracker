@@ -329,6 +329,11 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   String searchText = '';
+  String statusFilter = 'All';
+  DateTime? dateFrom;
+  DateTime? dateTo;
+
+  DateTime? _orderDate(OrderData order) => order.bookingDate;
 
   String get role =>
       (widget.userData['role'] ?? 'worker').toString();
@@ -451,12 +456,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
               .map((doc) => OrderData.fromFirestore(doc))
               .where((order) {
             final q = searchText.toLowerCase().trim();
-
-            if (q.isEmpty) return true;
-
-            return order.customer.toLowerCase().contains(q) ||
+            final matchesSearch = q.isEmpty ||
+                order.customer.toLowerCase().contains(q) ||
                 order.cn.toLowerCase().contains(q) ||
                 order.destination.toLowerCase().contains(q);
+
+            final matchesStatus = statusFilter == 'All' ||
+                order.status == statusFilter;
+
+            final orderDate = order.bookingDate;
+            final normalizedOrderDate = orderDate == null
+                ? null
+                : DateTime(orderDate.year, orderDate.month, orderDate.day);
+            final normalizedFrom = dateFrom == null
+                ? null
+                : DateTime(dateFrom!.year, dateFrom!.month, dateFrom!.day);
+            final normalizedTo = dateTo == null
+                ? null
+                : DateTime(dateTo!.year, dateTo!.month, dateTo!.day);
+
+            final matchesFrom = normalizedFrom == null ||
+                (normalizedOrderDate != null &&
+                    !normalizedOrderDate.isBefore(normalizedFrom));
+            final matchesTo = normalizedTo == null ||
+                (normalizedOrderDate != null &&
+                    !normalizedOrderDate.isAfter(normalizedTo));
+
+            return matchesSearch && matchesStatus && matchesFrom && matchesTo;
           }).toList();
 
           return RefreshIndicator(
@@ -517,7 +543,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: statusFilter,
+                        decoration: InputDecoration(
+                          labelText: 'Status',
+                          prefixIcon: const Icon(Icons.filter_alt_outlined),
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        items: const [
+                          'All',
+                          'Pending API Sync',
+                          'In Transit',
+                          'Out for Delivery',
+                          'Delivered',
+                          'Returned',
+                        ].map((item) => DropdownMenuItem<String>(
+                          value: item,
+                          child: Text(item, overflow: TextOverflow.ellipsis),
+                        )).toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() => statusFilter = value);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pickDateRange,
+                        icon: const Icon(Icons.date_range_rounded),
+                        label: Text(_dateFilterLabel()),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                if (dateFrom != null || dateTo != null || statusFilter != 'All')
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          dateFrom = null;
+                          dateTo = null;
+                          statusFilter = 'All';
+                        });
+                      },
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      label: const Text('Clear filters'),
+                    ),
+                  ),
+
+                const SizedBox(height: 4),
 
                 if (orders.isEmpty)
                   _emptyState()
@@ -551,6 +644,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+
+  Future<void> _pickDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      initialDateRange: dateFrom != null && dateTo != null
+          ? DateTimeRange(start: dateFrom!, end: dateTo!)
+          : null,
+    );
+
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      dateFrom = picked.start;
+      dateTo = picked.end;
+    });
+  }
+
+  String _dateFilterLabel() {
+    if (dateFrom == null && dateTo == null) return 'Date';
+    if (dateFrom != null && dateTo != null) {
+      return '${_shortDate(dateFrom!)} - ${_shortDate(dateTo!)}';
+    }
+    return _shortDate(dateFrom ?? dateTo!);
+  }
+
+  String _shortDate(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   Widget _welcomeCard() {
     final name =
@@ -814,9 +936,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     ],
   ),
+
+  const SizedBox(height: 8),
+
+  Row(
+    children: [
+      Expanded(
+        child: _orderInfo(
+          Icons.calendar_today_outlined,
+          'Book: ${_formatDateTime(order.bookingDate)}',
+        ),
+      ),
+      Expanded(
+        child: _orderInfo(
+          Icons.update_rounded,
+          'Status: ${_formatDateTime(order.statusDate)}',
+        ),
+      ),
+    ],
+  ),
+
+  if (order.deliveryDate != null) ...[
+    const SizedBox(height: 8),
+    _orderInfo(
+      Icons.task_alt_rounded,
+      'Delivered: ${_formatDateTime(order.deliveryDate)}',
+    ),
+  ],
         ],
     ),
   );
+}
+
+String _formatDateTime(DateTime? value) {
+  if (value == null) return '-';
+  return '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 }
 
 Widget _orderInfo(IconData icon, String text) {
@@ -1224,6 +1378,9 @@ class OrderData {
   final String destination;
   final String workerName;
   final String workerUid;
+  final DateTime? bookingDate;
+  final DateTime? statusDate;
+  final DateTime? deliveryDate;
 
   const OrderData({
     required this.customer,
@@ -1234,7 +1391,16 @@ class OrderData {
     required this.destination,
     required this.workerName,
     this.workerUid = '',
+    this.bookingDate,
+    this.statusDate,
+    this.deliveryDate,
   });
+
+  static DateTime? _date(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return null;
+  }
 
   factory OrderData.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -1246,10 +1412,13 @@ class OrderData {
       cn: (data['cn'] ?? '').toString(),
       product: (data['product'] ?? 'Not specified').toString(),
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
-      status: (data['status'] ?? 'In Transit').toString(),
+      status: (data['status'] ?? 'Pending API Sync').toString(),
       destination: (data['destination'] ?? '').toString(),
       workerName: (data['workerName'] ?? '').toString(),
       workerUid: (data['workerUid'] ?? '').toString(),
+      bookingDate: _date(data['bookingDate']),
+      statusDate: _date(data['statusDate']),
+      deliveryDate: _date(data['deliveryDate']),
     );
   }
 }
@@ -1259,12 +1428,16 @@ Widget _field({
   required String label,
   required IconData icon,
   TextInputType? keyboardType,
+  bool readOnly = false,
+  VoidCallback? onTap,
 }) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 13),
     child: TextField(
       controller: controller,
       keyboardType: keyboardType,
+      readOnly: readOnly,
+      onTap: onTap,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
@@ -1297,6 +1470,9 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   final amountController = TextEditingController();
   final destinationController = TextEditingController();
   final workerController = TextEditingController();
+  final bookingDateController = TextEditingController();
+
+  DateTime? bookingDate;
 
   final ImagePicker _picker = ImagePicker();
   final TextRecognizer _textRecognizer =
@@ -1443,10 +1619,26 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
       cnController.text = cn;
     }
 
-    final cod = _firstMatch(
-      r'(?:COD|COLLECT\s*AMOUNT|COLLECT|AMOUNT)\s*[:\-]?\s*(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
+    var cod = _firstMatch(
+      r'(?:COD|COLLECT\s*AMOUNT|COD\s*AMOUNT)[^\d]{0,80}(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
       text,
     );
+
+    if (cod.isEmpty) {
+      for (final line in text.split('\n')) {
+        if (RegExp(r'\bCOD\b', caseSensitive: false).hasMatch(line)) {
+          final match = RegExp(
+            r'(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
+            caseSensitive: false,
+          ).firstMatch(line);
+          if (match != null) {
+            cod = match.group(1)?.trim() ?? '';
+            break;
+          }
+        }
+      }
+    }
+
     if (cod.isNotEmpty) {
       amountController.text = cod.replaceAll(',', '');
     }
@@ -1467,17 +1659,28 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
       destinationController.text = _cleanOcrValue(destination);
     }
 
+    final bookDate = _firstMatch(
+      r'(?:BOOK\s*DATE|BOOKING\s*DATE)\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{4}|[0-9]{4}[\/-][0-9]{1,2}[\/-][0-9]{1,2})',
+      text,
+    );
+    final parsedBookDate = _parseReceiptDate(bookDate);
+    if (parsedBookDate != null) {
+      bookingDate = parsedBookDate;
+      bookingDateController.text = _formatDateOnly(parsedBookDate);
+    }
+
     final product = _firstMatch(
-      r'(?:PRODUCT|SPECIAL\s*INSTRUCTIONS?|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
+      r'(?:PRODUCT|ITEM|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
       text,
     );
     if (product.isNotEmpty) {
-      productController.text = _cleanOcrValue(product);
+      productController.text = _cleanProductValue(product);
     }
 
+    // Kuch LCS receipts mein product dedicated label ke bajaye
+    // Special Instruction ke start mein hota hai.
     if (productController.text.trim().isEmpty) {
-      final specialIndex =
-          upper.indexOf('SPECIAL INSTRUCTION');
+      final specialIndex = upper.indexOf('SPECIAL INSTRUCTION');
       if (specialIndex >= 0) {
         final tail = text.substring(specialIndex);
         final lines = tail
@@ -1486,12 +1689,49 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
             .where((e) => e.isNotEmpty)
             .toList();
         if (lines.length > 1) {
-          productController.text =
-              _cleanOcrValue(lines[1].replaceFirst(':', '').trim());
+          var candidate = _cleanOcrValue(
+            lines[1].replaceFirst(RegExp(r'^[:\-]+'), '').trim(),
+          );
+          candidate = candidate.split(RegExp(
+            r'\s*(?:\)|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH)',
+            caseSensitive: false,
+          )).first;
+          candidate = _cleanProductValue(candidate);
+          if (candidate.isNotEmpty) {
+            productController.text = candidate;
+          }
         }
       }
     }
   }
+
+  String _cleanProductValue(String value) {
+    return _cleanOcrValue(value)
+        .replaceAll(RegExp(r'[\)\(]+'), ' ')
+        .replaceAll(RegExp(
+          r'\s*(?:OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
+          caseSensitive: false,
+        ), '')
+        .trim();
+  }
+
+  DateTime? _parseReceiptDate(String value) {
+    if (value.trim().isEmpty) return null;
+    final v = value.trim().replaceAll('/', '-');
+    final parts = v.split('-');
+    try {
+      if (parts.length != 3) return null;
+      if (parts[0].length == 4) {
+        return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      }
+      return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _formatDateOnly(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 
   String _cleanOcrValue(String value) {
     return value
@@ -1526,7 +1766,6 @@ Future<void> _loadWorkerName() async {
     // Worker name load fail ho to order save phir bhi continue rahe.
   }
 }
-  String status = 'In Transit';
 
   @override
   void dispose() {
@@ -1536,9 +1775,24 @@ Future<void> _loadWorkerName() async {
     amountController.dispose();
     destinationController.dispose();
     workerController.dispose();
+    bookingDateController.dispose();
     _textRecognizer.close();
     _barcodeScanner.close();
     super.dispose();
+  }
+
+  Future<void> _pickBookingDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      initialDate: bookingDate ?? DateTime.now(),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      bookingDate = picked;
+      bookingDateController.text = _formatDateOnly(picked);
+    });
   }
 
   Future<void> save() async {
@@ -1554,6 +1808,7 @@ Future<void> _loadWorkerName() async {
 
     final amount =
         double.tryParse(amountController.text.trim()) ?? 0;
+    final finalBookingDate = bookingDate ?? DateTime.now();
 
     try {
       await FirebaseFirestore.instance.collection('orders').add({
@@ -1563,10 +1818,13 @@ Future<void> _loadWorkerName() async {
             ? 'Not specified'
             : productController.text.trim(),
         'amount': amount,
-        'status': status,
+        'status': 'Pending API Sync',
         'destination': destinationController.text.trim(),
         'workerName': workerController.text.trim(),
         'workerUid': widget.workerUid,
+        'bookingDate': Timestamp.fromDate(finalBookingDate),
+        'statusDate': null,
+        'deliveryDate': null,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -1649,7 +1907,7 @@ Future<void> _loadWorkerName() async {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    '1–20 receipts select karein. App CN, COD, customer aur destination read karke fields fill karegi.',
+                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
                     style: TextStyle(
                       fontSize: 11,
                       color: Colors.grey.shade700,
@@ -1739,39 +1997,41 @@ Future<void> _loadWorkerName() async {
             ),
 
             _field(
+              controller: bookingDateController,
+              label: 'Booking Date',
+              icon: Icons.calendar_today_outlined,
+              readOnly: true,
+              onTap: _pickBookingDate,
+            ),
+
+            _field(
               controller: workerController,
               label: 'Worker Name',
               icon: Icons.person_outline_rounded,
             ),
-                    DropdownButtonFormField<String>(
-              value: status,
-              decoration: InputDecoration(
-                labelText: 'Status',
-                prefixIcon: const Icon(
-                  Icons.local_shipping_outlined,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1769E0).withOpacity(.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF1769E0).withOpacity(.12),
                 ),
               ),
-              items: const [
-                'In Transit',
-                'Out for Delivery',
-                'Delivered',
-                'Returned',
-              ].map((item) {
-                return DropdownMenuItem<String>(
-                  value: item,
-                  child: Text(item),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    status = value;
-                  });
-                }
-              },
+              child: const Row(
+                children: [
+                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
             ),
             SizedBox(
               width: double.infinity,
