@@ -783,7 +783,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
-                    if (widget.isAdmin) ...[
+                    if (isAdmin) ...[
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String>(
@@ -1731,7 +1731,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   icon: const Icon(Icons.edit_rounded),
                   label: const Text('Edit Order'),
                 ),
-              if (widget.isAdmin) ...[
+              if (isAdmin) ...[
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: () => _deleteOrder(context, order),
@@ -2435,6 +2435,30 @@ Future<void> _loadWorkerName() async {
         'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // If the secure LCS proxy is configured, try the first sync immediately.
+      // API credentials are never stored in this APK.
+      if (lcsApiProxyUrl.trim().isNotEmpty) {
+        try {
+          final result = await LcsApiService.syncCn(
+            cnController.text.trim(),
+          );
+          await orderRef.update({
+            'status': result.status,
+            'statusDate': result.statusDate == null
+                ? null
+                : Timestamp.fromDate(result.statusDate!),
+            'deliveryDate': result.deliveryDate == null
+                ? null
+                : Timestamp.fromDate(result.deliveryDate!),
+            'lastApiSyncAt': FieldValue.serverTimestamp(),
+            'lcsRawStatus': result.status,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {
+          // Keep the order as Pending API Sync if the first API sync fails.
+        }
+      }
 
       if (!mounted) return;
       Navigator.pop(context);
