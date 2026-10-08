@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -32,6 +35,147 @@ class LcsOrderTrackerApp extends StatelessWidget {
       home: const LoginScreen(),
     );
   }
+}
+
+// ============================================================
+// LCS API
+// ============================================================
+// IMPORTANT: API key/password are NOT stored in this APK.
+// This app talks to a secure proxy Worker, which keeps the LCS
+// credentials server-side. Set the Worker URL here after deployment.
+const String lcsApiProxyUrl = '';
+
+class LcsApiService {
+  static Future<Map<String, dynamic>> trackCn(String cn) async {
+    if (lcsApiProxyUrl.trim().isEmpty) {
+      throw Exception('LCS API proxy abhi configure nahi hua.');
+    }
+
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(Uri.parse(lcsApiProxyUrl));
+      request.headers.contentType = ContentType.json;
+      request.add(utf8.encode(jsonEncode({'track_numbers': [cn]})));
+
+      final response = await request.close();
+      final body = await utf8.decodeStream(response);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('API HTTP ${response.statusCode}: $body');
+      }
+
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) {
+        throw Exception('API response invalid hai.');
+      }
+      return Map<String, dynamic>.from(decoded);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static String _cleanStatus(dynamic value) {
+    final text = (value ?? '').toString().trim();
+    return text.isEmpty ? 'Pending API Sync' : text;
+  }
+
+  static DateTime? _tryDate(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    final text = value.toString().trim();
+    if (text.isEmpty) return null;
+
+    final iso = DateTime.tryParse(text);
+    if (iso != null) return iso;
+
+    final m = RegExp(r'^(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?').firstMatch(text);
+    if (m != null) {
+      final day = int.tryParse(m.group(1)!) ?? 0;
+      final month = int.tryParse(m.group(2)!) ?? 0;
+      final year = int.tryParse(m.group(3)!) ?? 0;
+      final hour = int.tryParse(m.group(4) ?? '0') ?? 0;
+      final minute = int.tryParse(m.group(5) ?? '0') ?? 0;
+      final second = int.tryParse(m.group(6) ?? '0') ?? 0;
+      if (year > 0 && month > 0 && day > 0) {
+        return DateTime(year, month, day, hour, minute, second);
+      }
+    }
+    return null;
+  }
+
+  static DateTime? _dateFromMap(Map map) {
+    const preferredKeys = [
+      'status_date', 'statusDate', 'activity_date', 'activityDate',
+      'tracking_date', 'trackingDate', 'date_time', 'datetime', 'date',
+      'time', 'created_at', 'updated_at',
+    ];
+    for (final key in preferredKeys) {
+      final parsed = _tryDate(map[key]);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> _maps(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  static Future<LcsSyncResult> syncCn(String cn) async {
+    final response = await trackCn(cn);
+    final packets = _maps(response['packet_list']);
+    if (packets.isEmpty) {
+      throw Exception((response['error'] ?? 'CN ka record nahi mila.').toString());
+    }
+
+    final packet = packets.first;
+    final status = _cleanStatus(packet['booked_packet_status'] ?? packet['status']);
+    DateTime? statusDate = _dateFromMap(packet);
+    DateTime? deliveryDate;
+
+    final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
+    final details = _maps(detail);
+    for (final item in details) {
+      final itemStatus = (item['status'] ?? item['Status'] ?? item['activity'] ?? item['Activity'] ?? '').toString();
+      final itemDate = _dateFromMap(item);
+      if (itemDate != null && (statusDate == null || itemDate.isAfter(statusDate!))) {
+        statusDate = itemDate;
+      }
+      if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
+        if (deliveryDate == null || itemDate.isAfter(deliveryDate!)) {
+          deliveryDate = itemDate;
+        }
+      }
+    }
+
+    if (status.toLowerCase().contains('deliver') && deliveryDate == null) {
+      deliveryDate = statusDate;
+    }
+
+    return LcsSyncResult(
+      status: status,
+      statusDate: statusDate,
+      deliveryDate: deliveryDate,
+      rawPacket: packet,
+    );
+  }
+}
+
+class LcsSyncResult {
+  final String status;
+  final DateTime? statusDate;
+  final DateTime? deliveryDate;
+  final Map<String, dynamic> rawPacket;
+
+  const LcsSyncResult({
+    required this.status,
+    this.statusDate,
+    this.deliveryDate,
+    required this.rawPacket,
+  });
 }
 
 // ============================================================
@@ -639,7 +783,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
-                    if (isAdmin) ...[
+                    if (widget.isAdmin) ...[
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String>(
@@ -858,16 +1002,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     int delivered = 0;
     int inTransit = 0;
     int outForDelivery = 0;
+    int returned = 0;
+    int pendingSync = 0;
 
     for (final order in orders) {
       final status = order.status.trim();
-
       if (status == 'Delivered') {
         delivered++;
       } else if (status == 'In Transit') {
         inTransit++;
       } else if (status == 'Out for Delivery') {
         outForDelivery++;
+      } else if (status == 'Returned') {
+        returned++;
+      } else if (status == 'Pending API Sync') {
+        pendingSync++;
       }
     }
 
@@ -877,32 +1026,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: 1.65,
+      childAspectRatio: 1.72,
       children: [
-        _statCard(
-          'Total Orders',
-          orders.length.toString(),
-          Icons.inventory_2_rounded,
-          const Color(0xFF1769E0),
-        ),
-        _statCard(
-          'In Transit',
-          inTransit.toString(),
-          Icons.local_shipping_rounded,
-          const Color(0xFF7B61FF),
-        ),
-        _statCard(
-          'Out for Delivery',
-          outForDelivery.toString(),
-          Icons.delivery_dining_rounded,
-          const Color(0xFFFF9800),
-        ),
-        _statCard(
-          'Delivered',
-          delivered.toString(),
-          Icons.check_circle_rounded,
-          const Color(0xFF16A36A),
-        ),
+        _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF1769E0)),
+        _statCard('Pending Sync', pendingSync.toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
+        _statCard('In Transit', inTransit.toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
+        _statCard('Out for Delivery', outForDelivery.toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
+        _statCard('Delivered', delivered.toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
+        _statCard('Returned', returned.toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
       ],
     );
   }
@@ -949,131 +1080,103 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _orderCard(OrderData order) {
     final color = statusColor(order.status);
+    final canEdit = isAdmin || order.workerUid == workerUid;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(19),
-      ),
-      child: Column(
-        children: [
-  Row(
-    children: [
-      Container(
-        width: 44,
-        height: 44,
+    return InkWell(
+      borderRadius: BorderRadius.circular(19),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderDetailScreen(
+              orderId: order.id,
+              isAdmin: isAdmin,
+              currentUid: workerUid,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF1769E0).withOpacity(.08),
-          borderRadius: BorderRadius.circular(13),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(19),
         ),
-        child: const Icon(
-          Icons.inventory_2_rounded,
-          color: Color(0xFF1769E0),
-        ),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              order.customer,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1769E0).withOpacity(.08),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(Icons.inventory_2_rounded, color: Color(0xFF1769E0)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(order.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 3),
+                      Text('CN: ${order.cn}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                _statusBadge(order.status, color),
+              ],
             ),
-            const SizedBox(height: 3),
-            Text(
-              'CN: ${order.cn}',
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 12,
-              ),
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _orderInfo(Icons.shopping_bag_outlined, order.product)),
+                Expanded(child: _orderInfo(Icons.payments_outlined, 'Rs. ${order.amount.toStringAsFixed(0)}')),
+              ],
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _orderInfo(Icons.location_on_outlined, order.destination)),
+                Expanded(child: _orderInfo(Icons.person_outline_rounded, order.workerName.isEmpty ? 'Worker' : order.workerName)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _orderInfo(Icons.calendar_today_outlined, 'Book: ${_formatDateTime(order.bookingDate)}')),
+                Expanded(child: _orderInfo(Icons.update_rounded, 'Status: ${_formatDateTime(order.statusDate)}')),
+              ],
+            ),
+            if (order.deliveryDate != null) ...[
+              const SizedBox(height: 8),
+              _orderInfo(Icons.task_alt_rounded, 'Delivered: ${_formatDateTime(order.deliveryDate)}'),
+            ],
+            if (canEdit || isAdmin || order.receiptUrls.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (order.receiptUrls.isNotEmpty)
+                    const Icon(Icons.photo_library_outlined, size: 17, color: Color(0xFF1769E0)),
+                  if (order.receiptUrls.isNotEmpty) const SizedBox(width: 8),
+                  Text(
+                    canEdit ? 'Tap to view / edit' : 'Tap to view',
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF1769E0), fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
-      _statusBadge(order.status, color),
-    ],
-  ),
-
-  const SizedBox(height: 14),
-  const Divider(height: 1),
-  const SizedBox(height: 12),
-
-  Row(
-    children: [
-      Expanded(
-        child: _orderInfo(
-          Icons.shopping_bag_outlined,
-          order.product,
-        ),
-      ),
-      Expanded(
-        child: _orderInfo(
-          Icons.payments_outlined,
-          'Rs. ${order.amount.toStringAsFixed(0)}',
-        ),
-      ),
-    ],
-  ),
-
-  const SizedBox(height: 8),
-
-  Row(
-    children: [
-      Expanded(
-        child: _orderInfo(
-          Icons.location_on_outlined,
-          order.destination,
-        ),
-      ),
-      Expanded(
-        child: _orderInfo(
-          Icons.person_outline_rounded,
-          order.workerName.isEmpty
-              ? 'Worker'
-              : order.workerName,
-        ),
-      ),
-    ],
-  ),
-
-  const SizedBox(height: 8),
-
-  Row(
-    children: [
-      Expanded(
-        child: _orderInfo(
-          Icons.calendar_today_outlined,
-          'Book: ${_formatDateTime(order.bookingDate)}',
-        ),
-      ),
-      Expanded(
-        child: _orderInfo(
-          Icons.update_rounded,
-          'Status: ${_formatDateTime(order.statusDate)}',
-        ),
-      ),
-    ],
-  ),
-
-  if (order.deliveryDate != null) ...[
-    const SizedBox(height: 8),
-    _orderInfo(
-      Icons.task_alt_rounded,
-      'Delivered: ${_formatDateTime(order.deliveryDate)}',
-    ),
-  ],
-        ],
-    ),
-  );
-}
+    );
+  }
 
 String _formatDateTime(DateTime? value) {
   if (value == null) return '-';
@@ -1488,6 +1591,356 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 }
 
+class OrderDetailScreen extends StatefulWidget {
+  final String orderId;
+  final bool isAdmin;
+  final String currentUid;
+
+  const OrderDetailScreen({
+    super.key,
+    required this.orderId,
+    required this.isAdmin,
+    required this.currentUid,
+  });
+
+  @override
+  State<OrderDetailScreen> createState() => _OrderDetailScreenState();
+}
+
+class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  bool syncing = false;
+
+  Future<void> _syncOrder(BuildContext context, OrderData order) async {
+    if (syncing) return;
+    setState(() => syncing = true);
+    try {
+      final result = await LcsApiService.syncCn(order.cn);
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'status': result.status,
+        'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+        'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+        'lastApiSyncAt': FieldValue.serverTimestamp(),
+        'lcsRawStatus': result.status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('LCS status updated: ${result.status}')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('LCS sync nahi hua: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => syncing = false);
+    }
+  }
+
+  Future<void> _deleteOrder(BuildContext context, OrderData order) async {
+    if (!widget.isAdmin) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Order?'),
+        content: Text('CN ${order.cn} ko permanently delete karna hai?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).delete();
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Order delete nahi hua: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Order Details', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('orders').doc(widget.orderId).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text('Order load nahi hua.\n${snapshot.error}', textAlign: TextAlign.center));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final doc = snapshot.data!;
+          if (!doc.exists) return const Center(child: Text('Order delete ho chuka hai.'));
+
+          final order = OrderData.fromFirestore(doc);
+          final canEdit = widget.isAdmin || order.workerUid == widget.currentUid;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              _detailHeader(order),
+              const SizedBox(height: 14),
+              _detailSection('Order Information', [
+                _detailRow('Customer', order.customer),
+                _detailRow('CN Number', order.cn),
+                _detailRow('Product', order.product),
+                _detailRow('COD Amount', 'Rs. ${order.amount.toStringAsFixed(0)}'),
+                _detailRow('Destination', order.destination),
+                _detailRow('Worker', order.workerName),
+              ]),
+              const SizedBox(height: 14),
+              _detailSection('Dates & Tracking', [
+                _detailRow('Booking Date', _formatDateTime(order.bookingDate)),
+                _detailRow('Current Status', order.status),
+                _detailRow('Status Date', _formatDateTime(order.statusDate)),
+                _detailRow('Delivery Date', _formatDateTime(order.deliveryDate)),
+                _detailRow('Last API Sync', _formatDateTime(order.lastApiSyncAt)),
+              ]),
+              const SizedBox(height: 14),
+              _receiptSection(context, order.receiptUrls),
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: syncing ? null : () => _syncOrder(context, order),
+                icon: syncing
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.sync_rounded),
+                label: Text(syncing ? 'Syncing LCS...' : 'Sync LCS Status'),
+              ),
+              const SizedBox(height: 10),
+              if (canEdit)
+                FilledButton.icon(
+                  onPressed: () async {
+                    await showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => EditOrderSheet(order: order),
+                    );
+                  },
+                  icon: const Icon(Icons.edit_rounded),
+                  label: const Text('Edit Order'),
+                ),
+              if (widget.isAdmin) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => _deleteOrder(context, order),
+                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                  label: const Text('Delete Order', style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _detailHeader(OrderData order) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFF1769E0), Color(0xFF3D8BFF)]),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(order.customer, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 4),
+                Text('CN: ${order.cn}', style: TextStyle(color: Colors.white.withOpacity(.85))),
+                const SizedBox(height: 8),
+                _statusBadge(order.status, Colors.white),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailSection(String title, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        ...children,
+      ]),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        SizedBox(width: 120, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w600))),
+        Expanded(child: Text(value.isEmpty ? '-' : value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
+      ]),
+    );
+  }
+
+  Widget _receiptSection(BuildContext context, List<String> urls) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.receipt_long_rounded, color: Color(0xFF1769E0)),
+          const SizedBox(width: 8),
+          Text('Receipt Images (${urls.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        ]),
+        const SizedBox(height: 12),
+        if (urls.isEmpty)
+          Text('Receipt image abhi permanently save nahi hoti. Spark development mode mein image sirf OCR/review ke liye use hoti hai.', style: TextStyle(color: Colors.grey.shade600))
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 10, mainAxisSpacing: 10),
+            itemCount: urls.length,
+            itemBuilder: (_, index) => GestureDetector(
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => Dialog(
+                  child: InteractiveViewer(child: Image.network(urls[index], fit: BoxFit.contain)),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(urls[index], fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: const Icon(Icons.broken_image_outlined))),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+class EditOrderSheet extends StatefulWidget {
+  final OrderData order;
+  const EditOrderSheet({super.key, required this.order});
+  @override
+  State<EditOrderSheet> createState() => _EditOrderSheetState();
+}
+
+class _EditOrderSheetState extends State<EditOrderSheet> {
+  late final TextEditingController customerController;
+  late final TextEditingController cnController;
+  late final TextEditingController productController;
+  late final TextEditingController amountController;
+  late final TextEditingController destinationController;
+  late final TextEditingController bookingDateController;
+  late DateTime? bookingDate;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final o = widget.order;
+    customerController = TextEditingController(text: o.customer);
+    cnController = TextEditingController(text: o.cn);
+    productController = TextEditingController(text: o.product);
+    amountController = TextEditingController(text: o.amount.toStringAsFixed(0));
+    destinationController = TextEditingController(text: o.destination);
+    bookingDate = o.bookingDate;
+    bookingDateController = TextEditingController(text: o.bookingDate == null ? '' : _formatDateTime(o.bookingDate));
+  }
+
+  @override
+  void dispose() {
+    customerController.dispose();
+    cnController.dispose();
+    productController.dispose();
+    amountController.dispose();
+    destinationController.dispose();
+    bookingDateController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime(2100), initialDate: bookingDate ?? DateTime.now());
+    if (picked == null || !mounted) return;
+    setState(() {
+      bookingDate = picked;
+      bookingDateController.text = _formatDateTime(picked);
+    });
+  }
+
+  Future<void> _save() async {
+    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Customer name aur CN required hain.')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.order.id).update({
+        'customer': customerController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': double.tryParse(amountController.text.trim()) ?? 0,
+        'destination': destinationController.text.trim(),
+        'bookingDate': Timestamp.fromDate(bookingDate ?? DateTime.now()),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order updated successfully.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Order update nahi hua: $e')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      child: SingleChildScrollView(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 45, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+          const SizedBox(height: 18),
+          const Text('Edit Order', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 16),
+          _field(controller: customerController, label: 'Customer Name', icon: Icons.person_outline_rounded),
+          _field(controller: cnController, label: 'LCS CN Number', icon: Icons.qr_code_2_rounded),
+          _field(controller: productController, label: 'Product', icon: Icons.shopping_bag_outlined),
+          _field(controller: amountController, label: 'COD Amount', icon: Icons.payments_outlined, keyboardType: TextInputType.number),
+          _field(controller: destinationController, label: 'Destination', icon: Icons.location_on_outlined),
+          _field(controller: bookingDateController, label: 'Booking Date', icon: Icons.calendar_today_outlined, readOnly: true, onTap: _pickDate),
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(color: const Color(0xFF1769E0).withOpacity(.06), borderRadius: BorderRadius.circular(14)),
+            child: Text('LCS Status manually edit nahi hoga. API status ko control karegi.', style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(width: double.infinity, height: 52, child: FilledButton.icon(onPressed: saving ? null : _save, icon: const Icon(Icons.save_rounded), label: Text(saving ? 'Saving...' : 'Save Changes'))),
+        ]),
+      ),
+    );
+  }
+}
+
 Color statusColor(String status) {
   switch (status) {
     case 'Delivered':
@@ -1502,6 +1955,7 @@ Color statusColor(String status) {
 }
 
 class OrderData {
+  final String id;
   final String customer;
   final String cn;
   final String product;
@@ -1513,8 +1967,11 @@ class OrderData {
   final DateTime? bookingDate;
   final DateTime? statusDate;
   final DateTime? deliveryDate;
+  final List<String> receiptUrls;
+  final DateTime? lastApiSyncAt;
 
   const OrderData({
+    required this.id,
     required this.customer,
     required this.cn,
     required this.product,
@@ -1526,6 +1983,8 @@ class OrderData {
     this.bookingDate,
     this.statusDate,
     this.deliveryDate,
+    this.receiptUrls = const [],
+    this.lastApiSyncAt,
   });
 
   static DateTime? _date(dynamic value) {
@@ -1534,12 +1993,15 @@ class OrderData {
     return null;
   }
 
-  factory OrderData.fromFirestore(
-    DocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
+  factory OrderData.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
+    final rawUrls = data['receiptUrls'];
+    final urls = rawUrls is List
+        ? rawUrls.map((e) => e.toString()).where((e) => e.isNotEmpty).toList()
+        : <String>[];
 
     return OrderData(
+      id: doc.id,
       customer: (data['customer'] ?? '').toString(),
       cn: (data['cn'] ?? '').toString(),
       product: (data['product'] ?? 'Not specified').toString(),
@@ -1551,6 +2013,8 @@ class OrderData {
       bookingDate: _date(data['bookingDate']),
       statusDate: _date(data['statusDate']),
       deliveryDate: _date(data['deliveryDate']),
+      receiptUrls: urls,
+      lastApiSyncAt: _date(data['lastApiSyncAt']),
     );
   }
 }
@@ -1617,7 +2081,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
 
   Future<void> _pickReceiptImages() async {
     try {
-      final images = await _picker.pickMultiImage(imageQuality: 85);
+      final images = await _picker.pickMultiImage(imageQuality: 75, maxWidth: 1600, maxHeight: 2200);
       if (images.isEmpty) return;
 
       final selected = images.take(20).toList();
@@ -1644,7 +2108,9 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     try {
       final image = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
+        imageQuality: 75,
+        maxWidth: 1600,
+        maxHeight: 2200,
       );
       if (image == null) return;
 
@@ -1929,27 +2395,23 @@ Future<void> _loadWorkerName() async {
   }
 
   Future<void> save() async {
-    if (customerController.text.trim().isEmpty ||
-        cnController.text.trim().isEmpty) {
+    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Customer name and CN number are required.'),
-        ),
+        const SnackBar(content: Text('Customer name and CN number are required.')),
       );
       return;
     }
 
-    final amount =
-        double.tryParse(amountController.text.trim()) ?? 0;
+    final amount = double.tryParse(amountController.text.trim()) ?? 0;
     final finalBookingDate = bookingDate ?? DateTime.now();
 
     try {
-      await FirebaseFirestore.instance.collection('orders').add({
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
+
+      await orderRef.set({
         'customer': customerController.text.trim(),
         'cn': cnController.text.trim(),
-        'product': productController.text.trim().isEmpty
-            ? 'Not specified'
-            : productController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
         'amount': amount,
         'status': 'Pending API Sync',
         'destination': destinationController.text.trim(),
@@ -1958,7 +2420,19 @@ Future<void> _loadWorkerName() async {
         'bookingDate': Timestamp.fromDate(finalBookingDate),
         'statusDate': null,
         'deliveryDate': null,
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
         'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Spark development mode: receipt images are used for OCR/review only.
+      // Permanent Storage upload is intentionally disabled for now.
+      await orderRef.update({
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
