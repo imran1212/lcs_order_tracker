@@ -512,7 +512,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _welcomeCard(),
                 const SizedBox(height: 16),
 
-                _statsRow(docs),
+                _statsRow(orders),
 
                 const SizedBox(height: 22),
 
@@ -671,12 +671,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
 
-                if (dateFrom != null || dateTo != null || statusFilter != 'All' || workerFilter != 'All')
+                if (_hasActiveFilters())
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton.icon(
                       onPressed: () {
                         setState(() {
+                          searchText = '';
                           dateFrom = null;
                           dateTo = null;
                           statusFilter = 'All';
@@ -692,7 +693,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 4),
 
                 if (orders.isEmpty)
-                  _emptyState()
+                  _emptyState(hasActiveFilters: _hasActiveFilters())
                 else
                   ...orders.map(
                     (order) => _orderCard(order),
@@ -844,16 +845,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _statsRow(
-      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  bool _hasActiveFilters() {
+    return searchText.trim().isNotEmpty ||
+        dateFrom != null ||
+        dateTo != null ||
+        statusFilter != 'All' ||
+        workerFilter != 'All' ||
+        dateFilterType != 'Booking Date';
+  }
+
+  Widget _statsRow(List<OrderData> orders) {
     int delivered = 0;
     int inTransit = 0;
     int outForDelivery = 0;
-    int returned = 0;
 
-    for (final doc in docs) {
-      final status =
-          (doc.data()['status'] ?? '').toString();
+    for (final order in orders) {
+      final status = order.status.trim();
 
       if (status == 'Delivered') {
         delivered++;
@@ -861,8 +868,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         inTransit++;
       } else if (status == 'Out for Delivery') {
         outForDelivery++;
-      } else if (status == 'Returned') {
-        returned++;
       }
     }
 
@@ -876,7 +881,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         _statCard(
           'Total Orders',
-          docs.length.toString(),
+          orders.length.toString(),
           Icons.inventory_2_rounded,
           const Color(0xFF1769E0),
         ),
@@ -1120,7 +1125,7 @@ Widget _statusBadge(String status, Color color) {
   );
 }
 
-Widget _emptyState() {
+Widget _emptyState({bool hasActiveFilters = false}) {
   return Container(
     padding: const EdgeInsets.all(35),
     decoration: BoxDecoration(
@@ -1130,25 +1135,50 @@ Widget _emptyState() {
     child: Column(
       children: [
         Icon(
-          Icons.inventory_2_outlined,
+          hasActiveFilters
+              ? Icons.filter_alt_off_rounded
+              : Icons.inventory_2_outlined,
           size: 50,
           color: Colors.grey.shade400,
         ),
         const SizedBox(height: 12),
-        const Text(
-          'No orders found',
-          style: TextStyle(
+        Text(
+          hasActiveFilters
+              ? 'No orders match these filters'
+              : 'No orders found',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
             fontWeight: FontWeight.w800,
             fontSize: 16,
           ),
         ),
         const SizedBox(height: 4),
         Text(
-          'Add your first LCS order.',
+          hasActiveFilters
+              ? 'Date, status, worker ya search filter change karein.'
+              : 'Add your first LCS order.',
+          textAlign: TextAlign.center,
           style: TextStyle(
             color: Colors.grey.shade600,
           ),
         ),
+        if (hasActiveFilters) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              setState(() {
+                searchText = '';
+                dateFrom = null;
+                dateTo = null;
+                statusFilter = 'All';
+                workerFilter = 'All';
+                dateFilterType = 'Booking Date';
+              });
+            },
+            icon: const Icon(Icons.clear_rounded),
+            label: const Text('Clear filters'),
+          ),
+        ],
       ],
     ),
   );
