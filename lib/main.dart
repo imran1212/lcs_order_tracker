@@ -43,7 +43,7 @@ class LcsOrderTrackerApp extends StatelessWidget {
 // IMPORTANT: API key/password are NOT stored in this APK.
 // This app talks to a secure proxy Worker, which keeps the LCS
 // credentials server-side. Set the Worker URL here after deployment.
-const String lcsApiProxyUrl = '';
+const String lcsApiProxyUrl = 'https://lcs-api.muhammad-emraan.workers.dev';
 
 class LcsApiService {
   static Future<Map<String, dynamic>> trackCn(String cn) async {
@@ -53,8 +53,15 @@ class LcsApiService {
 
     final client = HttpClient();
     try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      final idToken = await currentUser?.getIdToken();
+      if (idToken == null || idToken.isEmpty) {
+        throw Exception('Pehle app mein login karein.');
+      }
+
       final request = await client.postUrl(Uri.parse(lcsApiProxyUrl));
       request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $idToken');
       request.add(utf8.encode(jsonEncode({'track_numbers': [cn]})));
 
       final response = await request.close();
