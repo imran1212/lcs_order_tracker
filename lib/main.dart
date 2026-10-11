@@ -2372,7 +2372,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       if (previousStatus != result.status.trim()) {
-        await orderRef.collection('lcsStatusHistory').add({
+        // LCS_HISTORY_IDEMPOTENCY_V1: same status/date/source reuses the same document.
+        final historyStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+        final historyTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+        await orderRef.collection('lcsStatusHistory')
+            .doc('manual_${historyStatusKey}_$historyTimeKey')
+            .set({
           'cn': order.cn,
           'previousStatus': previousStatus,
           'status': result.status.trim(),
@@ -2381,7 +2386,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ? Timestamp.now()
               : Timestamp.fromDate(result.statusDate!),
           'recordedAt': FieldValue.serverTimestamp(),
-        });
+        }, SetOptions(merge: true));
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3259,14 +3264,16 @@ Future<void> _loadWorkerName() async {
       });
 
       // LCS_STATUS_HISTORY_V1: save the initial order status.
-      await orderRef.collection('lcsStatusHistory').add({
+      await orderRef.collection('lcsStatusHistory')
+          .doc('order_created_pending')
+          .set({
         'cn': cnController.text.trim(),
         'previousStatus': '',
         'status': 'Pending API Sync',
         'source': 'order_created',
         'activityDate': Timestamp.fromDate(finalBookingDate),
         'recordedAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
 
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
@@ -3291,7 +3298,11 @@ Future<void> _loadWorkerName() async {
           'updatedAt': FieldValue.serverTimestamp(),
         });
         if (result.status.trim() != 'Pending API Sync') {
-          await orderRef.collection('lcsStatusHistory').add({
+          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+          await orderRef.collection('lcsStatusHistory')
+              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+              .set({
             'cn': cnController.text.trim(),
             'previousStatus': 'Pending API Sync',
             'status': result.status.trim(),
@@ -3300,7 +3311,7 @@ Future<void> _loadWorkerName() async {
                 ? Timestamp.now()
                 : Timestamp.fromDate(result.statusDate!),
             'recordedAt': FieldValue.serverTimestamp(),
-          });
+          }, SetOptions(merge: true));
         }
       } catch (e) {
         syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
