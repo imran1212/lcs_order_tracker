@@ -3232,7 +3232,70 @@ Future<void> _loadWorkerName() async {
     });
   }
 
+  Future<void> _saveBulkReceiptOrders() async {
+    final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
+    if (valid.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kisi receipt se CN number detect nahi hua. Fields manually correct karein.')),
+      );
+      return;
+    }
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final ordersCollection = FirebaseFirestore.instance.collection('orders');
+      for (final draft in valid) {
+        final ref = ordersCollection.doc();
+        final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
+        final cn = (draft['cn'] ?? '').toString().trim();
+        batch.set(ref, {
+          'customer': (draft['customer'] ?? '').toString().trim(),
+          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
+          'cn': cn,
+          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
+          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
+          'status': 'Pending API Sync',
+          'destination': (draft['destination'] ?? '').toString().trim(),
+          'workerName': workerController.text.trim(),
+          'workerUid': widget.workerUid,
+          'bookingDate': Timestamp.fromDate(date),
+          'statusDate': null,
+          'deliveryDate': null,
+          'receiptUrls': <String>[],
+          'receiptCount': 1,
+          'receiptUploadStatus': 'temporary_only',
+          'receiptImageName': (draft['imagePath'] ?? '').toString(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'bulk_receipt_import',
+          'activityDate': Timestamp.fromDate(date),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      if (!mounted) return;
+      final skipped = _bulkReceiptDrafts.length - valid.length;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
+      );
+    }
+  }
+
   Future<void> save() async {
+    if (_bulkReceiptDrafts.length > 1) {
+      await _saveBulkReceiptOrders();
+      return;
+    }
     if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Customer name and CN number are required.')),
