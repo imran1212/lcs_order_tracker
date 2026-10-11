@@ -142,7 +142,7 @@ function constantTimeEqual(a, b) {
 function b64urlBytes(bytes) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/=/g, "").replace(/\\+/g, "-").replace(/\\//g, "_");
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 function b64url(value) { return b64urlBytes(new TextEncoder().encode(JSON.stringify(value))); }
 async function getGoogleAccessToken(sa) {
@@ -150,8 +150,8 @@ async function getGoogleAccessToken(sa) {
   const header = b64url({ alg: "RS256", typ: "JWT" });
   const claim = b64url({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/datastore", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 });
   const unsigned = header + "." + claim;
-  const pem = sa.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\\s/g, "");
-  const keyBytes = decode64url(pem.replace(/\\+/g, "-").replace(/\\//g, "_"));
+  const pem = sa.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
+  const keyBytes = decode64url(pem.replace(/\+/g, "-").replace(/\//g, "_"));
   const key = await crypto.subtle.importKey("pkcs8", keyBytes, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)));
   const assertion = unsigned + "." + b64urlBytes(signature);
