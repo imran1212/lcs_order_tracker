@@ -90,13 +90,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   await Workmanager().initialize(lcsBackgroundCallbackDispatcher);
-  await Workmanager().registerPeriodicTask(
-    'lcs-order-auto-sync-periodic',
-    _lcsBackgroundSyncTask,
-    frequency: const Duration(minutes: 15),
-    constraints: Constraints(networkType: NetworkType.connected),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
-  );
+  if (Platform.isAndroid) {
+    await Workmanager().registerPeriodicTask(
+      'lcs-order-auto-sync-periodic',
+      _lcsBackgroundSyncTask,
+      frequency: const Duration(minutes: 15),
+      constraints: Constraints(networkType: NetworkType.connected),
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+    );
+  }
   runApp(const LcsOrderTrackerApp());
 }
 
