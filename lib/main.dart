@@ -302,7 +302,7 @@ class _InstantQrTrackingScreenState extends State<InstantQrTrackingScreen> {
     String? extractedCn;
     for (final part in upperRaw.split(RegExp(r'[,;|\s]+'))) {
       final candidate = part.replaceAll(RegExp(r'[^A-Z0-9]'), '');
-      if (RegExp(r'^[A-Z]{2}\d{8,14}).hasMatch(candidate)) {
+      if (candidate.length >= 10 && candidate.length <= 16 && RegExp(r'^[A-Z]{2}[0-9]+$').hasMatch(candidate)) {
         extractedCn = candidate;
         break;
       }
