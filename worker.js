@@ -20,7 +20,17 @@ export default {
       "Access-Control-Max-Age": "86400",
     };
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-    if (request.method === "GET") return json({ ok: true, service: "lcs-api", message: "Worker is running" }, 200, cors);
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+      if (url.pathname === "/push") return json({ ok: true, endpoint: "lcs-push", message: "Push endpoint is deployed; configure secrets before registering in LCS." }, 200);
+      return json({ ok: true, service: "lcs-api", message: "Worker is running" }, 200, cors);
+    }
+    const url = new URL(request.url);
+    if (url.pathname === "/push") {
+      if (request.method !== "POST") return json({ error: "Use POST for LCS push events." }, 405);
+      return handleLcsPush(request, env);
+    }
+
     if (request.method !== "POST") return json({ error: "Use POST for tracking." }, 405, cors);
 
     try {
@@ -69,6 +79,147 @@ export default {
     }
   }
 };
+
+async function handleLcsPush(request, env) {
+  try {
+    if (!env.LCS_PUSH_SECRET || !env.FIREBASE_SERVICE_ACCOUNT_JSON || !env.FIREBASE_PROJECT_ID) {
+      console.error("Push endpoint configuration is missing.");
+      return json({ status: 0, errors: ["Push endpoint is not configured."] }, 503);
+    }
+    const supplied = request.headers.get("X-LCS-Push-Secret") || "";
+    if (!constantTimeEqual(supplied, env.LCS_PUSH_SECRET)) {
+      return json({ status: 0, errors: ["Unauthorized"] }, 401);
+    }
+    const raw = await request.text();
+    if (raw.length > 256000) return json({ status: 0, errors: ["Payload too large"] }, 413);
+    let body;
+    try { body = JSON.parse(raw); } catch { return json({ status: 0, errors: ["Invalid JSON"] }, 400); }
+    if (!body || !Array.isArray(body.data) || body.data.length === 0) {
+      return json({ status: 0, errors: ["Expected non-empty data array"] }, 400);
+    }
+    const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    if (serviceAccount.project_id !== env.FIREBASE_PROJECT_ID || !serviceAccount.client_email || !serviceAccount.private_key) {
+      return json({ status: 0, errors: ["Firebase service account configuration invalid"] }, 503);
+    }
+    const accessToken = await getGoogleAccessToken(serviceAccount);
+    const results = [];
+    for (const item of body.data) {
+      const cn = String(item?.cn_number ?? "").trim();
+      const status = String(item?.status ?? "").trim();
+      const reason = String(item?.reason ?? "").trim();
+      const receiverName = String(item?.receiver_name ?? "").trim();
+      const activityDate = String(item?.activity_date ?? "").trim();
+      if (!cn || !status) {
+        results.push({ cn_number: cn, ok: false, error: "Missing cn_number or status" });
+        continue;
+      }
+      const matched = await findOrderByCn(env.FIREBASE_PROJECT_ID, accessToken, cn);
+      if (!matched) {
+        results.push({ cn_number: cn, ok: false, error: "Order not found" });
+        continue;
+      }
+      const event = { cn_number: cn, status, reason, receiver_name: receiverName, activity_date: activityDate, received_at: new Date().toISOString() };
+      await writeOrderStatus(env.FIREBASE_PROJECT_ID, accessToken, matched.name, event);
+      results.push({ cn_number: cn, ok: true });
+    }
+    const failed = results.some(r => !r.ok);
+    // LCS expects HTTP 202 and status=1 for successful processing.
+    // Return a failure when any event could not be matched/saved so it can be investigated.
+    if (failed) return json({ status: 0, errors: results.filter(r => !r.ok), results }, 400);
+    return json({ status: 1, errors: [], results }, 202);
+  } catch (error) {
+    console.error("LCS push processing failed:", error?.message || String(error));
+    return json({ status: 0, errors: ["Internal processing error"] }, 500);
+  }
+}
+
+function constantTimeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+function b64urlBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\\+/g, "-").replace(/\\//g, "_");
+}
+function b64url(value) { return b64urlBytes(new TextEncoder().encode(JSON.stringify(value))); }
+async function getGoogleAccessToken(sa) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url({ alg: "RS256", typ: "JWT" });
+  const claim = b64url({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/datastore", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 });
+  const unsigned = header + "." + claim;
+  const pem = sa.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\\s/g, "");
+  const keyBytes = decode64url(pem.replace(/\\+/g, "-").replace(/\\//g, "_"));
+  const key = await crypto.subtle.importKey("pkcs8", keyBytes, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)));
+  const assertion = unsigned + "." + b64urlBytes(signature);
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.access_token) throw new Error("Google OAuth token exchange failed.");
+  return data.access_token;
+}
+async function findOrderByCn(projectId, token, cn) {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: "orders" }],
+      where: { fieldFilter: { field: { fieldPath: "cn" }, op: "EQUAL", value: { stringValue: cn } } },
+      limit: 2
+    } })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error("Firestore order lookup failed.");
+  const docs = data.filter(row => row.document).map(row => row.document);
+  if (docs.length !== 1) return null; // Avoid updating an ambiguous duplicate CN.
+  return docs[0];
+}
+async function writeOrderStatus(projectId, token, documentName, event) {
+  const base = `https://firestore.googleapis.com/v1/${documentName}`;
+  const statusDate = parseLcsDate(event.activity_date);
+  const fields = {
+    status: { stringValue: event.status },
+    lcsRawStatus: { stringValue: event.status },
+    lastApiSyncAt: { timestampValue: new Date().toISOString() },
+    updatedAt: { timestampValue: new Date().toISOString() },
+    lcsPushReason: { stringValue: event.reason },
+    lcsReceiverName: { stringValue: event.receiver_name }
+  };
+  if (statusDate) fields.statusDate = { timestampValue: statusDate };
+  const patchUrl = base + "?updateMask.fieldPaths=status&updateMask.fieldPaths=lcsRawStatus&updateMask.fieldPaths=lastApiSyncAt&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=lcsPushReason&updateMask.fieldPaths=lcsReceiverName" + (statusDate ? "&updateMask.fieldPaths=statusDate" : "");
+  const patch = await fetch(patchUrl, {
+    method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields })
+  });
+  if (!patch.ok) throw new Error("Firestore order update failed.");
+  const eventId = await sha256Hex(JSON.stringify([event.cn_number, event.status, event.activity_date, event.reason]));
+  const historyUrl = `https://firestore.googleapis.com/v1/${documentName}/lcsStatusHistory?documentId=${eventId}`;
+  const history = await fetch(historyUrl, {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: {
+      cn_number: { stringValue: event.cn_number }, status: { stringValue: event.status },
+      reason: { stringValue: event.reason }, receiver_name: { stringValue: event.receiver_name },
+      activity_date: { stringValue: event.activity_date }, received_at: { timestampValue: event.received_at }
+    }})
+  });
+  if (!history.ok && history.status !== 409) throw new Error("Firestore status history write failed.");
+}
+function parseLcsDate(value) {
+  const m = /^(\\d{4})-(\\d{2})-(\\d{2})[ T](\\d{2}):(\\d{2})(?::(\\d{2}))?$/.exec(value);
+  if (!m) return null;
+  const date = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return [...digest].map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
