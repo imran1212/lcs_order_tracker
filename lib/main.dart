@@ -645,6 +645,104 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // LCS_FAILED_DELIVERY_RESCUE_V1: surface failed/attempted delivery orders for follow-up.
+  bool _needsDeliveryRescue(OrderData order) {
+    final status = order.status.toLowerCase().trim();
+    if (status.contains('delivered') || status.contains('returned') ||
+        status.contains('return to shipper') || status.contains('cancelled')) {
+      return false;
+    }
+    return status.contains('attempt') ||
+        status.contains('undeliver') ||
+        status.contains('delivery failed') ||
+        status.contains('failed delivery') ||
+        status == 'pn1' ||
+        status == 'pn2' ||
+        status.startsWith('pn1 ') ||
+        status.startsWith('pn2 ');
+  }
+
+  Widget _failedDeliveryRescue(List<OrderData> orders) {
+    final rescueOrders = orders.where(_needsDeliveryRescue).toList()
+      ..sort((a, b) {
+        final aDate = a.statusDate ?? a.lastApiSyncAt ?? a.bookingDate;
+        final bDate = b.statusDate ?? b.lastApiSyncAt ?? b.bookingDate;
+        if (aDate == null) return bDate == null ? 0 : -1;
+        if (bDate == null) return 1;
+        return aDate.compareTo(bDate);
+      });
+    if (rescueOrders.isEmpty) return const SizedBox.shrink();
+    final shown = rescueOrders.take(5).toList();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEBEE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFEF9A9A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.delivery_dining_rounded, color: Color(0xFFB42318)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Failed Delivery Rescue • ${rescueOrders.length} order(s)',
+                  style: const TextStyle(
+                    color: Color(0xFF912018),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Delivery attempt fail ho to customer se rabta karein, address/phone confirm karein aur courier se re-attempt request karein.',
+            style: TextStyle(color: Color(0xFF7A271A), fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          ...shown.map((order) {
+            final since = order.statusDate ?? order.lastApiSyncAt ?? order.bookingDate;
+            final ageHours = since == null ? null : DateTime.now().difference(since).inHours;
+            return Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB42318)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(order.cn, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                        Text(order.status, style: const TextStyle(fontSize: 12, color: Color(0xFF7A271A))),
+                      ],
+                    ),
+                  ),
+                  if (ageHours != null)
+                    Text(ageHours < 0 ? 'Just now' : '${ageHours}h ago',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF912018))),
+                ],
+              ),
+            );
+          }),
+          if (rescueOrders.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Text(
+                '+ ${rescueOrders.length - shown.length} more order(s) need follow-up',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF912018)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // LCS_STATION_DELAY_ALERT_V1: flag station statuses older than 24 hours.
   static const Duration _stationDelayThreshold = Duration(hours: 24);
 
@@ -907,6 +1005,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 const SizedBox(height: 14),
                 _stationDelayAlert(orders),
+                const SizedBox(height: 12),
+                _failedDeliveryRescue(orders),
 
                 const SizedBox(height: 22),
 
