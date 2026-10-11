@@ -1,0 +1,6 @@
+name = "lcs-api"
+main = "worker.js"
+compatibility_date = "2026-10-10"
+
+[vars]
+FIREBASE_PROJECT_ID = "lcs-tracker-4c90d"
