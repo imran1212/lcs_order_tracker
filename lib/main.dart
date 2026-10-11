@@ -1003,6 +1003,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 _statsRow(orders),
 
+                if (isAdmin) ...[
+                  const SizedBox(height: 14),
+                  _workerPerformanceReport(
+                    docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
+                  ),
+                ],
+
                 const SizedBox(height: 14),
                 _stationDelayAlert(orders),
                 const SizedBox(height: 12),
@@ -1402,6 +1409,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
         statusFilter != 'All' ||
         workerFilter != 'All' ||
         dateFilterType != 'Booking Date';
+  }
+
+  // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
+  Widget _workerPerformanceReport(List<OrderData> allOrders) {
+    final grouped = <String, List<OrderData>>{};
+    final names = <String, String>{};
+    for (final order in allOrders) {
+      final uid = order.workerUid.trim().isEmpty ? 'unassigned' : order.workerUid.trim();
+      grouped.putIfAbsent(uid, () => <OrderData>[]).add(order);
+      names[uid] = order.workerName.trim().isEmpty
+          ? (uid == 'unassigned' ? 'Unassigned' : uid)
+          : order.workerName.trim();
+    }
+    if (grouped.isEmpty) return const SizedBox.shrink();
+    final entries = grouped.entries.toList()
+      ..sort((a, b) => b.value.length.compareTo(a.value.length));
+    final shown = entries.take(5).toList();
+
+    int countStatus(List<OrderData> items, bool Function(String) test) =>
+        items.where((o) => test(o.status.toLowerCase().trim())).length;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.analytics_outlined, color: Color(0xFF1769E0)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('Worker Performance Report',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'All loaded orders • worker-wise status counts (not a time-based productivity score)',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 10),
+          ...shown.map((entry) {
+            final items = entry.value;
+            final delivered = countStatus(items, (s) => s.contains('deliver') && !s.contains('undeliver'));
+            final returned = countStatus(items, (s) => s.contains('return'));
+            final failed = countStatus(items, (s) =>
+                s.contains('attempt') || s.contains('undeliver') ||
+                s.contains('failed') || s == 'pn1' || s == 'pn2');
+            final pending = countStatus(items, (s) => s == 'pending api sync');
+            final deliveryRate = items.isEmpty ? 0 : (delivered * 100 / items.length).round();
+            return Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(names[entry.key] ?? entry.key,
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w800)),
+                        ),
+                        Text('${items.length} orders',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 6,
+                      children: [
+                        Text('Delivered: $delivered', style: const TextStyle(fontSize: 11, color: Color(0xFF16834A))),
+                        Text('Returned: $returned', style: const TextStyle(fontSize: 11, color: Color(0xFFB42318))),
+                        Text('Failed/attempt: $failed', style: const TextStyle(fontSize: 11, color: Color(0xFFB45309))),
+                        Text('Pending sync: $pending', style: const TextStyle(fontSize: 11, color: Color(0xFF475569))),
+                        Text('Delivered / all: $deliveryRate%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          if (entries.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('+ ${entries.length - shown.length} more workers',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.grey)),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _statsRow(List<OrderData> orders) {
