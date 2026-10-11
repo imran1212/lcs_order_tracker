@@ -300,9 +300,21 @@ class _InstantQrTrackingScreenState extends State<InstantQrTrackingScreen> {
     final upperRaw = raw.toUpperCase();
     // LCS QR payload may contain comma-separated fields, e.g. CN,724,2400.00.
     String? extractedCn;
-    for (final part in upperRaw.split(RegExp(r'[,;|\s]+'))) {
+    for (final part in upperRaw.split(RegExp(r'[,;|\\s]+'))) {
       final candidate = part.replaceAll(RegExp(r'[^A-Z0-9]'), '');
-      if (RegExp(r'^[A-Z]{2}\d{8,14}
+      if (RegExp(r'^[A-Z]{2}\\d{8,14}$').hasMatch(candidate)) {
+        extractedCn = candidate;
+        break;
+      }
+    }
+    if (extractedCn == null) {
+      extractedCn = RegExp(r'[A-Z]{2}\\d{8,14}').firstMatch(upperRaw)?.group(0);
+    }
+    if (extractedCn == null) {
+      final compact = upperRaw.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+      extractedCn = RegExp(r'[A-Z]{2}\\d{10}').firstMatch(compact)?.group(0);
+    }
+    if (extractedCn == null) {
       setState(() { _handled = true; _error = 'QR mein valid CN nahi mila. Manual CN enter karein.'; });
       return;
     }
