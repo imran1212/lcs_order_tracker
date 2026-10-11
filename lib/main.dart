@@ -32,7 +32,7 @@ class LcsOrderTrackerApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
-      home: const LoginScreen(),
+      home: const AuthGate(),
     );
   }
 }
@@ -187,6 +187,102 @@ class LcsSyncResult {
 }
 
 // ============================================================
+// AUTH GATE - restore the Firebase session when app is reopened
+// ============================================================
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, authSnapshot) {
+        if (authSnapshot.connectionState == ConnectionState.waiting) {
+          return const _AuthLoadingScreen();
+        }
+
+        final user = authSnapshot.data;
+        if (user == null) return const LoginScreen();
+
+        return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          future: FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
+          builder: (context, profileSnapshot) {
+            if (profileSnapshot.connectionState == ConnectionState.waiting) {
+              return const _AuthLoadingScreen();
+            }
+            if (profileSnapshot.hasError) {
+              return _AuthErrorScreen(
+                message: 'Profile load nahi hua. Internet check karke retry karein.',
+                onRetry: () {},
+              );
+            }
+            final profile = profileSnapshot.data;
+            if (profile == null || !profile.exists) {
+              FirebaseAuth.instance.signOut();
+              return const LoginScreen();
+            }
+
+            final data = profile.data() ?? <String, dynamic>{};
+            final activeValue = data['active'];
+            final role = (data['role'] ?? 'worker').toString().trim().toLowerCase();
+            final active = activeValue == null ||
+                activeValue == true ||
+                activeValue.toString().trim().toLowerCase() == 'true';
+
+            if (!active && role != 'admin') {
+              FirebaseAuth.instance.signOut();
+              return const LoginScreen();
+            }
+            return DashboardScreen(userData: data);
+          },
+        );
+      },
+    );
+  }
+}
+
+class _AuthLoadingScreen extends StatelessWidget {
+  const _AuthLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+}
+
+class _AuthErrorScreen extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _AuthErrorScreen({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(message, textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => FirebaseAuth.instance.currentUser?.reload(),
+                  child: const Text('Retry'),
+                ),
+                TextButton(
+                  onPressed: () => FirebaseAuth.instance.signOut(),
+                  child: const Text('Sign out'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+}
+
+// ============================================================
 // LOGIN
 // ============================================================
 
@@ -265,16 +361,10 @@ final loginEmail = email.contains('@')
         return;
       }
 
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DashboardScreen(
-            userData: data,
-          ),
-        ),
-      );
+      // AuthGate listens to authStateChanges and opens the dashboard.
+      // Firebase keeps the session across app restarts unless user signs out.
+      if (mounted) setState(() => loading = false);
+      return;
     } on FirebaseAuthException catch (e) {
       String message = 'Login failed';
 
