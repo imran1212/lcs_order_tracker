@@ -3111,7 +3111,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     }
 
     final phone = _firstMatch(
-      r'(?:CONTACT|PHONE|MOBILE|CELL)[^0-9+]{0,12}([+0-9()\\- ]{7,20})',
+      r'(?:CONTACT|PHONE|MOBILE|CELL)[^0-9+]{0,12}([+0-9() -]{7,20})',
       text,
     );
     if (phone.isNotEmpty) customerPhoneController.text = _cleanOcrValue(phone);
