@@ -1184,7 +1184,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
 
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
+                _dateWiseSummary(orders.length),
+
+                const SizedBox(height: 10),
 
                 if (orders.isEmpty)
                   _emptyState(hasActiveFilters: _hasActiveFilters())
@@ -1334,6 +1337,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
             color: Colors.white,
             size: 54,
           ),
+        ],
+      ),
+    );
+  }
+
+  // LCS_DATEWISE_SUMMARY_V1: make the date basis/range and result count explicit.
+  Widget _dateWiseSummary(int count) {
+    final hasRange = dateFrom != null || dateTo != null;
+    final rangeText = dateFrom != null && dateTo != null
+        ? '${_shortDate(dateFrom!)} – ${_shortDate(dateTo!)}'
+        : dateFrom != null
+            ? 'From ${_shortDate(dateFrom!)}'
+            : dateTo != null
+                ? 'Until ${_shortDate(dateTo!)}'
+                : 'All dates';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF2FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.query_stats_rounded, color: Color(0xFF1769E0)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$dateFilterType report • $rangeText',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF1E40AF)),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$count matching order(s) • summary cards update with these filters',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF1D4ED8)),
+                ),
+              ],
+            ),
+          ),
+          if (hasRange)
+            IconButton(
+              tooltip: 'Clear date range',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => setState(() {
+                dateFrom = null;
+                dateTo = null;
+              }),
+              icon: const Icon(Icons.event_busy_rounded, size: 20, color: Color(0xFF1769E0)),
+            ),
         ],
       ),
     );
