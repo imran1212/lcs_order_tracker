@@ -645,6 +645,98 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // LCS_STATION_DELAY_ALERT_V1: flag station statuses older than 24 hours.
+  static const Duration _stationDelayThreshold = Duration(hours: 24);
+
+  List<OrderData> _stationDelayedOrders(List<OrderData> orders) {
+    final now = DateTime.now();
+    return orders.where((order) {
+      final status = order.status.toLowerCase();
+      final atStation = status.contains('station') ||
+          status.contains('arrived at station') ||
+          status.startsWith('ar ');
+      if (!atStation || status.contains('delivered') || status.contains('return')) {
+        return false;
+      }
+      final since = order.statusDate ?? order.lastApiSyncAt ?? order.bookingDate;
+      if (since == null) return false;
+      return now.difference(since) >= _stationDelayThreshold;
+    }).toList()
+      ..sort((a, b) {
+        final aSince = a.statusDate ?? a.lastApiSyncAt ?? a.bookingDate!;
+        final bSince = b.statusDate ?? b.lastApiSyncAt ?? b.bookingDate!;
+        return aSince.compareTo(bSince);
+      });
+  }
+
+  Widget _stationDelayAlert(List<OrderData> orders) {
+    final delayed = _stationDelayedOrders(orders);
+    if (delayed.isEmpty) return const SizedBox.shrink();
+    final shown = delayed.take(3).toList();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFB74D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Color(0xFFB45309)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Station Delay Alert • ${delayed.length} order(s)',
+                  style: const TextStyle(
+                    color: Color(0xFF92400E),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Parcel station status par 24 hours se zyada rukha hua hai. Courier follow-up karein.',
+            style: TextStyle(color: Color(0xFF78350F), fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          ...shown.map((order) {
+            final since = order.statusDate ?? order.lastApiSyncAt ?? order.bookingDate!;
+            final hours = DateTime.now().difference(since).inHours;
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF92400E)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${order.cn} • ${order.status}',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                    ),
+                  ),
+                  Text('${hours}h', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF92400E))),
+                ],
+              ),
+            );
+          }),
+          if (delayed.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '+ ${delayed.length - shown.length} more delayed order(s)',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF92400E)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   String get role =>
       (widget.userData['role'] ?? 'worker').toString();
 
@@ -812,6 +904,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 16),
 
                 _statsRow(orders),
+
+                const SizedBox(height: 14),
+                _stationDelayAlert(orders),
 
                 const SizedBox(height: 22),
 
