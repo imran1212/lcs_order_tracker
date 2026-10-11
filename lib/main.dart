@@ -113,6 +113,7 @@ class LcsApiService {
   static DateTime? _dateFromMap(Map map) {
     const preferredKeys = [
       'status_date', 'statusDate', 'activity_date', 'activityDate',
+      'Activity Date', 'Activity_Date', 'activity date', 'activityDateTime',
       'tracking_date', 'trackingDate', 'date_time', 'datetime', 'date',
       'time', 'created_at', 'updated_at',
     ];
@@ -146,7 +147,7 @@ class LcsApiService {
     final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
     final details = _maps(detail);
     for (final item in details) {
-      final itemStatus = (item['status'] ?? item['Status'] ?? item['activity'] ?? item['Activity'] ?? '').toString();
+      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ?? item['activity'] ?? item['Activity'] ?? '').toString();
       final itemDate = _dateFromMap(item);
       if (itemDate != null && (statusDate == null || itemDate.isAfter(statusDate!))) {
         statusDate = itemDate;
