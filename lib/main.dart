@@ -2467,8 +2467,30 @@ Future<void> _loadWorkerName() async {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      // Automatically fetch LCS status immediately after saving a new order.
+      // Keep the order saved even if the courier API is temporarily unavailable.
+      String? syncWarning;
+      try {
+        final result = await LcsApiService.syncCn(cnController.text.trim());
+        await orderRef.update({
+          'status': result.status,
+          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+          'lastApiSyncAt': FieldValue.serverTimestamp(),
+          'lcsRawStatus': result.status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
+      }
+
       if (!mounted) return;
       Navigator.pop(context);
+      if (syncWarning != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
