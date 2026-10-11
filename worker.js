@@ -84,22 +84,22 @@ async function handleLcsPush(request, env) {
   try {
     if (!env.LCS_PUSH_SECRET || !env.FIREBASE_SERVICE_ACCOUNT_JSON || !env.FIREBASE_PROJECT_ID) {
       console.error("Push endpoint configuration is missing.");
-      return json({ status: 0, errors: ["Push endpoint is not configured."] }, 503);
+      return json([{ status: 0, errors: ["Push endpoint is not configured."] }], 503);
     }
     const supplied = request.headers.get("X-LCS-Push-Secret") || "";
     if (!constantTimeEqual(supplied, env.LCS_PUSH_SECRET)) {
-      return json({ status: 0, errors: ["Unauthorized"] }, 401);
+      return json([{ status: 0, errors: ["Unauthorized"] }], 401);
     }
     const raw = await request.text();
-    if (raw.length > 256000) return json({ status: 0, errors: ["Payload too large"] }, 413);
+    if (raw.length > 256000) return json([{ status: 0, errors: ["Payload too large"] }], 413);
     let body;
-    try { body = JSON.parse(raw); } catch { return json({ status: 0, errors: ["Invalid JSON"] }, 400); }
+    try { body = JSON.parse(raw); } catch { return json([{ status: 0, errors: ["Invalid JSON"] }], 400); }
     if (!body || !Array.isArray(body.data) || body.data.length === 0) {
-      return json({ status: 0, errors: ["Expected non-empty data array"] }, 400);
+      return json([{ status: 0, errors: ["Expected non-empty data array"] }], 400);
     }
     const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
     if (serviceAccount.project_id !== env.FIREBASE_PROJECT_ID || !serviceAccount.client_email || !serviceAccount.private_key) {
-      return json({ status: 0, errors: ["Firebase service account configuration invalid"] }, 503);
+      return json([{ status: 0, errors: ["Firebase service account configuration invalid"] }], 503);
     }
     const accessToken = await getGoogleAccessToken(serviceAccount);
     const results = [];
@@ -125,11 +125,11 @@ async function handleLcsPush(request, env) {
     const failed = results.some(r => !r.ok);
     // LCS expects HTTP 202 and status=1 for successful processing.
     // Return a failure when any event could not be matched/saved so it can be investigated.
-    if (failed) return json({ status: 0, errors: results.filter(r => !r.ok), results }, 400);
-    return json({ status: 1, errors: [], results }, 202);
+    if (failed) return json([{ status: 0, errors: results.filter(r => !r.ok) }], 400);
+    return json([{ status: 1, errors: [] }], 202);
   } catch (error) {
     console.error("LCS push processing failed:", error?.message || String(error));
-    return json({ status: 0, errors: ["Internal processing error"] }, 500);
+    return json([{ status: 0, errors: ["Internal processing error"] }], 500);
   }
 }
 
