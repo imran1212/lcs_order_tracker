@@ -53,8 +53,14 @@ export default {
       if (!body || !Array.isArray(body.track_numbers)) return json({ error: 'Expected {"track_numbers":["CN_NUMBER"]}.' }, 400, cors);
       if (body.track_numbers.length < 1 || body.track_numbers.length > MAX_CNS) return json({ error: `Send between 1 and ${MAX_CNS} CN numbers.` }, 400, cors);
 
-      const numbers = body.track_numbers.map(v => typeof v === "string" ? v.trim() : "");
-      if (numbers.some(v => v.length < 4 || v.length > 40 || !/^[A-Za-z0-9-]+$/.test(v))) return json({ error: "Invalid CN number format." }, 400, cors);
+      // LCS_SECURITY_IDEMPOTENCY_LOGGING_V1
+      const submittedNumbers = body.track_numbers.map(v => typeof v === "string" ? v.trim() : "");
+      if (submittedNumbers.some(v => v.length < 4 || v.length > 40 || !/^[A-Za-z0-9-]+$/.test(v))) {
+        console.warn("LCS tracking request rejected: invalid CN format.", { uid: user.uid, submittedCount: submittedNumbers.length });
+        return json({ error: "Invalid CN number format." }, 400, cors);
+      }
+      const numbers = [...new Set(submittedNumbers)];
+      console.log("LCS tracking request accepted.", { uid: user.uid, requestedCount: submittedNumbers.length, uniqueCount: numbers.length });
       const upstream = await fetch(LCS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -70,7 +76,7 @@ export default {
       }
       if (!upstream.ok) {
         console.error("LCS upstream HTTP error:", upstream.status);
-        return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status, details: result }, 502, cors);
+        return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
       }
       return json(result, 200, cors);
     } catch (error) {
@@ -102,7 +108,10 @@ async function handleLcsPush(request, env) {
       return json([{ status: 0, errors: ["Firebase service account configuration invalid"] }], 503);
     }
     const accessToken = await getGoogleAccessToken(serviceAccount);
+    // Bound batch size and report aggregate outcomes without logging payload/secrets.
+    if (body.data.length > 100) return json([{ status: 0, errors: ["Too many events in one request"] }], 413);
     const results = [];
+    const seenEvents = new Set();
     for (const item of body.data) {
       const cn = String(item?.cn_number ?? "").trim();
       const status = String(item?.status ?? "").trim();
@@ -118,11 +127,18 @@ async function handleLcsPush(request, env) {
         results.push({ cn_number: cn, ok: false, error: "Order not found" });
         continue;
       }
+      const eventKey = [cn, status, activityDate, reason].join("|");
+      if (seenEvents.has(eventKey)) {
+        results.push({ cn_number: cn, ok: true });
+        continue;
+      }
+      seenEvents.add(eventKey);
       const event = { cn_number: cn, status, reason, receiver_name: receiverName, activity_date: activityDate, received_at: new Date().toISOString() };
       await writeOrderStatus(env.FIREBASE_PROJECT_ID, accessToken, matched.name, event);
       results.push({ cn_number: cn, ok: true });
     }
     const failed = results.some(r => !r.ok);
+    console.log("LCS push batch processed.", { eventCount: body.data.length, successCount: results.filter(r => r.ok).length, failureCount: results.filter(r => !r.ok).length });
     // LCS expects HTTP 202 and status=1 for successful processing.
     // Return a failure when any event could not be matched/saved so it can be investigated.
     if (failed) return json([{ status: 0, errors: results.filter(r => !r.ok) }], 400);
