@@ -211,7 +211,7 @@ async function writeOrderStatus(projectId, token, documentName, event) {
   if (!history.ok && history.status !== 409) throw new Error("Firestore status history write failed.");
 }
 function parseLcsDate(value) {
-  const m = /^(\\d{4})-(\\d{2})-(\\d{2})[ T](\\d{2}):(\\d{2})(?::(\\d{2}))?$/.exec(value);
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
   if (!m) return null;
   const date = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
