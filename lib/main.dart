@@ -713,6 +713,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
+  // LCS_CUSTOMER_PHONE_AND_BULK_RECEIPTS_V1
   String searchText = '';
   String statusFilter = 'All';
   String dateFilterType = 'Booking Date';
@@ -1044,6 +1045,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final q = searchText.toLowerCase().trim();
             final matchesSearch = q.isEmpty ||
                 order.customer.toLowerCase().contains(q) ||
+                order.customerPhone.toLowerCase().contains(q) ||
                 order.cn.toLowerCase().contains(q) ||
                 order.destination.toLowerCase().contains(q);
 
@@ -1132,7 +1134,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     });
                   },
                   decoration: InputDecoration(
-                    hintText: 'Search customer, CN or destination...',
+                    hintText: 'Search customer, contact, CN or destination...',
                     prefixIcon:
                         const Icon(Icons.search_rounded),
                     filled: true,
@@ -2681,6 +2683,7 @@ class EditOrderSheet extends StatefulWidget {
 
 class _EditOrderSheetState extends State<EditOrderSheet> {
   late final TextEditingController customerController;
+  late final TextEditingController customerPhoneController;
   late final TextEditingController cnController;
   late final TextEditingController productController;
   late final TextEditingController amountController;
@@ -2694,6 +2697,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
     super.initState();
     final o = widget.order;
     customerController = TextEditingController(text: o.customer);
+    customerPhoneController = TextEditingController(text: o.customerPhone);
     cnController = TextEditingController(text: o.cn);
     productController = TextEditingController(text: o.product);
     amountController = TextEditingController(text: o.amount.toStringAsFixed(0));
@@ -2705,6 +2709,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
   @override
   void dispose() {
     customerController.dispose();
+    customerPhoneController.dispose();
     cnController.dispose();
     productController.dispose();
     amountController.dispose();
@@ -2731,6 +2736,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
     try {
       await FirebaseFirestore.instance.collection('orders').doc(widget.order.id).update({
         'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
         'cn': cnController.text.trim(),
         'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
         'amount': double.tryParse(amountController.text.trim()) ?? 0,
@@ -2761,6 +2767,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
           const Text('Edit Order', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
           const SizedBox(height: 16),
           _field(controller: customerController, label: 'Customer Name', icon: Icons.person_outline_rounded),
+          _field(controller: customerPhoneController, label: 'Customer Contact Number', icon: Icons.phone_outlined, keyboardType: TextInputType.phone),
           _field(controller: cnController, label: 'LCS CN Number', icon: Icons.qr_code_2_rounded),
           _field(controller: productController, label: 'Product', icon: Icons.shopping_bag_outlined),
           _field(controller: amountController, label: 'COD Amount', icon: Icons.payments_outlined, keyboardType: TextInputType.number),
@@ -2795,6 +2802,7 @@ Color statusColor(String status) {
 class OrderData {
   final String id;
   final String customer;
+  final String customerPhone;
   final String cn;
   final String product;
   final double amount;
@@ -2811,6 +2819,7 @@ class OrderData {
   const OrderData({
     required this.id,
     required this.customer,
+    this.customerPhone = '',
     required this.cn,
     required this.product,
     required this.amount,
@@ -2841,6 +2850,7 @@ class OrderData {
     return OrderData(
       id: doc.id,
       customer: (data['customer'] ?? '').toString(),
+      customerPhone: (data['customerPhone'] ?? '').toString(),
       cn: (data['cn'] ?? '').toString(),
       product: (data['product'] ?? 'Not specified').toString(),
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
@@ -2899,6 +2909,7 @@ class AddOrderSheet extends StatefulWidget {
 
 class _AddOrderSheetState extends State<AddOrderSheet> {
   final customerController = TextEditingController();
+  final customerPhoneController = TextEditingController();
   final cnController = TextEditingController();
   final productController = TextEditingController();
   final amountController = TextEditingController();
@@ -2914,6 +2925,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   final BarcodeScanner _barcodeScanner = BarcodeScanner();
 
   final List<XFile> _receiptImages = [];
+  final List<Map<String, dynamic>> _bulkReceiptDrafts = [];
   bool _ocrLoading = false;
   String _ocrMessage = '';
 
@@ -2927,7 +2939,8 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
         _receiptImages
           ..clear()
           ..addAll(selected);
-        _ocrMessage = '${selected.length} receipt image selected.';
+        _bulkReceiptDrafts.clear();
+        _ocrMessage = '${selected.length} receipt image selected; reading each receipt separately...';
       });
 
       await _runOcr();
@@ -2956,6 +2969,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
         _receiptImages
           ..clear()
           ..add(image);
+        _bulkReceiptDrafts.clear();
         _ocrMessage = 'Receipt photo selected.';
       });
 
@@ -2970,58 +2984,75 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
 
   Future<void> _runOcr() async {
     if (_receiptImages.isEmpty) return;
-
     setState(() {
       _ocrLoading = true;
-      _ocrMessage = 'Receipt read ho rahi hai...';
+      _ocrMessage = 'Har receipt alag read ho rahi hai...';
+      _bulkReceiptDrafts.clear();
     });
-
+    final original = <String, dynamic>{
+      'customer': customerController.text, 'phone': customerPhoneController.text,
+      'cn': cnController.text, 'product': productController.text,
+      'amount': amountController.text, 'destination': destinationController.text,
+      'date': bookingDate, 'dateText': bookingDateController.text,
+    };
     try {
-      final textParts = <String>[];
-      final barcodeValues = <String>[];
-
       for (final image in _receiptImages) {
+        customerController.clear(); customerPhoneController.clear(); cnController.clear();
+        productController.clear(); amountController.clear(); destinationController.clear();
+        bookingDate = null; bookingDateController.clear();
         final inputImage = InputImage.fromFilePath(image.path);
-
-        try {
-          final recognized =
-              await _textRecognizer.processImage(inputImage);
-          if (recognized.text.trim().isNotEmpty) {
-            textParts.add(recognized.text);
-          }
-        } catch (_) {}
-
+        String recognizedText = '';
+        final barcodeValues = <String>[];
+        try { recognizedText = (await _textRecognizer.processImage(inputImage)).text; } catch (_) {}
         try {
           final barcodes = await _barcodeScanner.processImage(inputImage);
           for (final barcode in barcodes) {
             final value = barcode.rawValue?.trim();
-            if (value != null && value.isNotEmpty) {
-              barcodeValues.add(value);
-            }
+            if (value != null && value.isNotEmpty) barcodeValues.add(value);
           }
         } catch (_) {}
+        _fillFieldsFromReceipt(recognizedText, barcodeValues);
+        _bulkReceiptDrafts.add({
+          'customer': customerController.text.trim(),
+          'customerPhone': customerPhoneController.text.trim(),
+          'cn': cnController.text.trim(),
+          'product': productController.text.trim(),
+          'amount': amountController.text.trim(),
+          'destination': destinationController.text.trim(),
+          'bookingDate': bookingDate,
+          'imagePath': image.name,
+        });
       }
-
-      final fullText = textParts.join('\n');
-      _fillFieldsFromReceipt(fullText, barcodeValues);
-
+      if (_bulkReceiptDrafts.isNotEmpty) {
+        final first = _bulkReceiptDrafts.first;
+        customerController.text = (first['customer'] ?? '').toString();
+        customerPhoneController.text = (first['customerPhone'] ?? '').toString();
+        cnController.text = (first['cn'] ?? '').toString();
+        productController.text = (first['product'] ?? '').toString();
+        amountController.text = (first['amount'] ?? '').toString();
+        destinationController.text = (first['destination'] ?? '').toString();
+        bookingDate = first['bookingDate'] as DateTime?;
+        bookingDateController.text = bookingDate == null ? '' : _formatDateOnly(bookingDate!);
+      }
       if (!mounted) return;
       setState(() {
-        _ocrMessage = fullText.trim().isEmpty
-            ? 'Text read nahi ho saka. Fields manually check karein.'
-            : '${_receiptImages.length} receipt(s) scanned. Fields review karein.';
+        final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).length;
+        _ocrMessage = '${_bulkReceiptDrafts.length} receipt(s) separately scanned; $valid CN detected. Review before saving.';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _ocrMessage = 'OCR complete nahi ho saka.';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('OCR error: $e')),
-      );
+      setState(() => _ocrMessage = 'OCR complete nahi ho saka: $e');
     } finally {
-      if (mounted) {
-        setState(() => _ocrLoading = false);
+      if (mounted) setState(() => _ocrLoading = false);
+      if (_bulkReceiptDrafts.isEmpty) {
+        customerController.text = original['customer'] as String;
+        customerPhoneController.text = original['phone'] as String;
+        cnController.text = original['cn'] as String;
+        productController.text = original['product'] as String;
+        amountController.text = original['amount'] as String;
+        destinationController.text = original['destination'] as String;
+        bookingDate = original['date'] as DateTime?;
+        bookingDateController.text = original['dateText'] as String;
       }
     }
   }
@@ -3078,6 +3109,12 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
     if (cod.isNotEmpty) {
       amountController.text = cod.replaceAll(',', '');
     }
+
+    final phone = _firstMatch(
+      r'(?:CONTACT|PHONE|MOBILE|CELL)[^0-9+]{0,12}([+0-9()\\- ]{7,20})',
+      text,
+    );
+    if (phone.isNotEmpty) customerPhoneController.text = _cleanOcrValue(phone);
 
     final customer = _firstMatch(
       r'(?:CONSIGNEE(?:\s*NAME)?|RECEIVER(?:\s*NAME)?|CUSTOMER(?:\s*NAME)?)\s*[:\-]?\s*([^\n]+)',
@@ -3207,6 +3244,7 @@ Future<void> _loadWorkerName() async {
   @override
   void dispose() {
     customerController.dispose();
+    customerPhoneController.dispose();
     cnController.dispose();
     productController.dispose();
     amountController.dispose();
@@ -3311,6 +3349,7 @@ Future<void> _loadWorkerName() async {
 
       await orderRef.set({
         'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
         'cn': cnController.text.trim(),
         'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
         'amount': amount,
@@ -3527,6 +3566,13 @@ Future<void> _loadWorkerName() async {
               controller: customerController,
               label: 'Customer Name',
               icon: Icons.person_outline_rounded,
+            ),
+
+            _field(
+              controller: customerPhoneController,
+              label: 'Customer Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
             ),
 
             _field(
