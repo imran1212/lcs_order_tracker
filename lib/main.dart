@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -570,6 +571,62 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  // LCS_STATUS_CHANGE_NOTIFICATIONS_V1
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _statusNotificationSubscription;
+  final Map<String, String> _previousOrderStatuses = <String, String>{};
+  bool _hasInitialStatusSnapshot = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final orders = isAdmin
+        ? FirebaseFirestore.instance
+            .collection('orders')
+            .orderBy('createdAt', descending: true)
+        : FirebaseFirestore.instance
+            .collection('orders')
+            .where('workerUid', isEqualTo: workerUid)
+            .orderBy('createdAt', descending: true);
+
+    _statusNotificationSubscription = orders.snapshots().listen((snapshot) {
+      if (!mounted) return;
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.removed) continue;
+        final data = change.doc.data();
+        if (data == null) continue;
+        final status = (data['status'] ?? 'Pending').toString().trim();
+        final previousStatus = _previousOrderStatuses[change.doc.id];
+
+        // Ignore the first snapshot: it is a baseline, not a status change.
+        if (_hasInitialStatusSnapshot &&
+            previousStatus != null &&
+            previousStatus != status &&
+            change.type == DocumentChangeType.modified) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Order ${(data['cn'] ?? change.doc.id).toString()}: '
+                '$previousStatus → $status',
+              ),
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        _previousOrderStatuses[change.doc.id] = status;
+      }
+      _hasInitialStatusSnapshot = true;
+    }, onError: (Object error) {
+      debugPrint('Status notification listener error: $error');
+    });
+  }
+
+  @override
+  void dispose() {
+    _statusNotificationSubscription?.cancel();
+    super.dispose();
+  }
+
   String searchText = '';
   String statusFilter = 'All';
   String dateFilterType = 'Booking Date';
