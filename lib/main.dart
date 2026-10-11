@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:workmanager/workmanager.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V1
@@ -271,6 +272,171 @@ class LcsSyncResult {
     this.deliveryDate,
     required this.rawPacket,
   });
+}
+
+class InstantQrTrackingScreen extends StatefulWidget {
+  const InstantQrTrackingScreen({super.key});
+  @override
+  State<InstantQrTrackingScreen> createState() => _InstantQrTrackingScreenState();
+}
+
+class _InstantQrTrackingScreenState extends State<InstantQrTrackingScreen> {
+  bool _handled = false;
+  bool _loading = false;
+  String? _cn;
+  String? _error;
+  Map<String, dynamic>? _packet;
+  List<Map<String, dynamic>> _history = [];
+
+  String _value(Map map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value != null && value.toString().trim().isNotEmpty) return value.toString().trim();
+    }
+    return '';
+  }
+
+  Future<void> _lookup(String raw) async {
+    final normalized = raw.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final match = RegExp(r'[A-Z]{2}\d{8,14}').firstMatch(normalized);
+    if (match == null) {
+      setState(() { _handled = true; _error = 'QR mein valid CN nahi mila. Manual CN enter karein.'; });
+      return;
+    }
+    final cn = match.group(0)!;
+    setState(() { _handled = true; _loading = true; _cn = cn; _error = null; });
+    try {
+      final response = await LcsApiService.trackCn(cn);
+      final list = response['packet_list'];
+      if (list is! List || list.isEmpty || list.first is! Map) {
+        throw Exception((response['error'] ?? 'Is CN ka record nahi mila.').toString());
+      }
+      final packet = Map<String, dynamic>.from(list.first as Map);
+      final rawHistory = packet['Tracking Detail'] ?? packet['tracking_detail'] ??
+          packet['trackingDetail'] ?? packet['tracking_details'] ??
+          packet['tracking_history'] ?? packet['Tracking History'];
+      final history = rawHistory is List
+          ? rawHistory.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() { _packet = packet; _history = history; _loading = false; });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loading = false; _error = e.toString().replaceFirst('Exception: ', ''); });
+    }
+  }
+
+  String _activityDate(Map map) {
+    final raw = _value(map, ['activity_date', 'activityDate', 'Activity Date', 'date', 'Date', 'status_date', 'statusDate', 'created_at']);
+    if (raw.isEmpty) return 'Date unavailable';
+    final date = DateTime.tryParse(raw);
+    if (date == null) return raw;
+    final d = date.toLocal();
+    return d.day.toString().padLeft(2, '0') + '/' +
+      d.month.toString().padLeft(2, '0') + '/' + d.year.toString() + ' ' +
+      d.hour.toString().padLeft(2, '0') + ':' + d.minute.toString().padLeft(2, '0');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _packet == null ? '' : _value(_packet!, ['booked_packet_status', 'status', 'Status']);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Instant QR Tracking')),
+      body: _cn == null && !_handled
+        ? Column(children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Leopards receipt ka QR camera ke samne rakhein.', textAlign: TextAlign.center),
+            ),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: MobileScanner(onDetect: (capture) {
+                  if (_handled) return;
+                  for (final barcode in capture.barcodes) {
+                    final raw = barcode.rawValue ?? '';
+                    if (raw.trim().isNotEmpty) { _lookup(raw); break; }
+                  }
+                }),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.keyboard),
+                label: const Text('Enter CN manually'),
+                onPressed: () async {
+                  final controller = TextEditingController();
+                  final value = await showDialog<String>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Enter tracking number'),
+                      content: TextField(controller: controller, textCapitalization: TextCapitalization.characters),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                        FilledButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Track')),
+                      ],
+                    ),
+                  );
+                  controller.dispose();
+                  if (value != null && value.trim().isNotEmpty && mounted) _lookup(value);
+                },
+              ),
+            ),
+          ])
+        : _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+            ? Center(child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 44),
+                  const SizedBox(height: 12),
+                  Text(_error!, textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  FilledButton(onPressed: () => setState(() { _handled = false; _cn = null; _error = null; _packet = null; _history = []; }), child: const Text('Scan again')),
+                ]),
+              ))
+            : ListView(padding: const EdgeInsets.all(16), children: [
+                Card(
+                  color: const Color(0xFFE8F1FF),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('ONE-TIME LOOKUP • NOT SAVED', style: TextStyle(color: Color(0xFF1769E0), fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 8),
+                      Text(_cn ?? '', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 8),
+                      Text(status.isEmpty ? 'Status unavailable' : status, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                      Text('Customer: ' + (_value(_packet!, ['consignee', 'consignee_name', 'receiver_name', 'customer_name']).isEmpty ? 'Not provided by API' : _value(_packet!, ['consignee', 'consignee_name', 'receiver_name', 'customer_name']))),
+                      Text('Destination: ' + (_value(_packet!, ['destination', 'destination_city', 'city']).isEmpty ? 'Not provided by API' : _value(_packet!, ['destination', 'destination_city', 'city']))),
+                      Text('COD: ' + (_value(_packet!, ['booked_packet_collect_amount', 'cod_amount', 'collect_amount', 'amount']).isEmpty ? 'Not provided by API' : _value(_packet!, ['booked_packet_collect_amount', 'cod_amount', 'collect_amount', 'amount']))),
+                    ]),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text('Tracking History (' + _history.length.toString() + ')', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                if (_history.isEmpty)
+                  const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('LCS API ne is response mein history provide nahi ki. Current status upar dikhaya gaya hai.')))
+                else
+                  ..._history.map((item) {
+                    final activity = _value(item, ['status', 'Status', 'Staus', 'activity', 'Activity', 'status_description', 'description']);
+                    final reason = _value(item, ['reason', 'Reason', 'remarks', 'Remarks', 'detail']);
+                    return Card(child: ListTile(
+                      leading: const Icon(Icons.local_shipping_outlined, color: Color(0xFF1769E0)),
+                      title: Text(activity.isEmpty ? 'Tracking activity' : activity),
+                      subtitle: Text(_activityDate(item) + (reason.isEmpty ? '' : ' • ' + reason)),
+                    ));
+                  }),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() { _handled = false; _cn = null; _error = null; _packet = null; _history = []; }),
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan another receipt'),
+                ),
+              ]),
+    );
+  }
 }
 
 // ============================================================
@@ -1086,6 +1252,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
               children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF1769E0), Color(0xFF3D8BFF)]),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.qr_code_scanner_rounded, color: Colors.white, size: 34),
+                    const SizedBox(width: 12),
+                    const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Instant QR Tracking', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900)),
+                      SizedBox(height: 4),
+                      Text('Live status • No order saved', style: TextStyle(color: Colors.white, fontSize: 11)),
+                    ])),
+                    IconButton(
+                      tooltip: 'Scan & Track Now',
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const InstantQrTrackingScreen())),
+                      icon: const Icon(Icons.arrow_forward_rounded, color: Colors.white),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 16),
                 _welcomeCard(),
                 const SizedBox(height: 16),
 
