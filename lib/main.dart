@@ -1793,7 +1793,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => syncing = true);
     try {
       final result = await LcsApiService.syncCn(order.cn);
-      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
+      final previousStatus = order.status.trim();
+      await orderRef.update({
         'status': result.status,
         'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
         'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
@@ -1801,6 +1803,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'lcsRawStatus': result.status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      if (previousStatus != result.status.trim()) {
+        await orderRef.collection('lcsStatusHistory').add({
+          'cn': order.cn,
+          'previousStatus': previousStatus,
+          'status': result.status.trim(),
+          'source': 'manual_sync',
+          'activityDate': result.statusDate == null
+              ? Timestamp.now()
+              : Timestamp.fromDate(result.statusDate!),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('LCS status updated: ${result.status}')),
@@ -1886,6 +1900,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 _detailRow('Last API Sync', _formatDateTime(order.lastApiSyncAt)),
               ]),
               const SizedBox(height: 14),
+              _statusHistorySection(widget.orderId),
+              const SizedBox(height: 14),
               _receiptSection(context, order.receiptUrls),
               const SizedBox(height: 18),
               OutlinedButton.icon(
@@ -1921,6 +1937,73 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           );
         },
       ),
+    );
+  }
+
+  // LCS_STATUS_HISTORY_V1: live timeline for recorded status transitions.
+  Widget _statusHistorySection(String orderId) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('orders')
+          .doc(orderId)
+          .collection('lcsStatusHistory')
+          .orderBy('recordedAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _detailSection('Status History', [
+            _detailRow('History', 'Load nahi ho saki.'),
+          ]);
+        }
+        if (!snapshot.hasData) {
+          return _detailSection('Status History', [
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: LinearProgressIndicator(),
+            ),
+          ]);
+        }
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return _detailSection('Status History', [
+            _detailRow('History', 'Abhi koi status history nahi hai.'),
+          ]);
+        }
+        return _detailSection('Status History', docs.map((doc) {
+          final data = doc.data();
+          final status = (data['status'] ?? 'Unknown').toString();
+          final previous = (data['previousStatus'] ?? '').toString();
+          final source = (data['source'] ?? 'tracking').toString();
+          final timeValue = data['activityDate'] ?? data['recordedAt'];
+          DateTime? eventDate;
+          if (timeValue is Timestamp) eventDate = timeValue.toDate();
+          if (timeValue is DateTime) eventDate = timeValue;
+          final dateText = eventDate == null ? 'Time unavailable' : _formatDateTime(eventDate);
+          final title = previous.isEmpty ? status : '$previous → $status';
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 3, right: 10),
+                  child: Icon(Icons.history_rounded, color: Color(0xFF1769E0), size: 20),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 3),
+                      Text('$dateText • $source', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList());
+      },
     );
   }
 
@@ -2605,6 +2688,16 @@ Future<void> _loadWorkerName() async {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      // LCS_STATUS_HISTORY_V1: save the initial order status.
+      await orderRef.collection('lcsStatusHistory').add({
+        'cn': cnController.text.trim(),
+        'previousStatus': '',
+        'status': 'Pending API Sync',
+        'source': 'order_created',
+        'activityDate': Timestamp.fromDate(finalBookingDate),
+        'recordedAt': FieldValue.serverTimestamp(),
+      });
+
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
       await orderRef.update({
@@ -2627,6 +2720,18 @@ Future<void> _loadWorkerName() async {
           'lcsRawStatus': result.status,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+        if (result.status.trim() != 'Pending API Sync') {
+          await orderRef.collection('lcsStatusHistory').add({
+            'cn': cnController.text.trim(),
+            'previousStatus': 'Pending API Sync',
+            'status': result.status.trim(),
+            'source': 'new_order_auto_sync',
+            'activityDate': result.statusDate == null
+                ? Timestamp.now()
+                : Timestamp.fromDate(result.statusDate!),
+            'recordedAt': FieldValue.serverTimestamp(),
+          });
+        }
       } catch (e) {
         syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
       }
