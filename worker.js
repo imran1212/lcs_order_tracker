@@ -48,7 +48,7 @@ export default {
       const upstream = await fetch(LCS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({ api_key: env.LCS_API_KEY, api_password: env.LCS_API_PASSWORD, track_numbers: numbers })
+        body: JSON.stringify({ api_key: env.LCS_API_KEY, api_password: env.LCS_API_PASSWORD, track_numbers: numbers.join(",") })
       });
       const responseText = await upstream.text();
       console.log("LCS upstream HTTP status:", upstream.status);
