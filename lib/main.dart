@@ -1982,6 +1982,128 @@ class OrderDetailScreen extends StatefulWidget {
 
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
   bool syncing = false;
+  // LCS_RETURN_PREVENTION_V1: notes for delivery/return investigation.
+  final TextEditingController _returnInvestigationController = TextEditingController();
+  bool _savingReturnInvestigation = false;
+  String? _loadedInvestigationOrderId;
+
+  @override
+  void dispose() {
+    _returnInvestigationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveReturnInvestigation() async {
+    if (_savingReturnInvestigation) return;
+    setState(() => _savingReturnInvestigation = true);
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'returnInvestigationNotes': _returnInvestigationController.text.trim(),
+        'returnInvestigationUpdatedAt': FieldValue.serverTimestamp(),
+        'returnInvestigationUpdatedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Investigation notes save ho gaye.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Notes save nahi huay: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingReturnInvestigation = false);
+    }
+  }
+
+  Widget _returnInvestigationSection({
+    required OrderData order,
+    required Map<String, dynamic> data,
+    required bool canEdit,
+  }) {
+    final status = order.status.toLowerCase();
+    final returnCase = status.contains('return') ||
+        status.contains('undeliver') ||
+        status.contains('attempt') ||
+        status.contains('failed');
+    if (_loadedInvestigationOrderId != order.id) {
+      _loadedInvestigationOrderId = order.id;
+      _returnInvestigationController.text =
+          (data['returnInvestigationNotes'] ?? '').toString();
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFCBD5E1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                returnCase ? Icons.assignment_late_outlined : Icons.shield_outlined,
+                color: returnCase ? const Color(0xFFB42318) : const Color(0xFF1769E0),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Return Prevention & Investigation',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            returnCase
+                ? 'Delivery/return risk detected. Customer contact, address issue, attempt details aur courier complaint ka record yahan rakhein.'
+                : 'Delivery issue ya return risk nazar aaye to follow-up details yahan record karein.',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _returnInvestigationController,
+            readOnly: !canEdit,
+            minLines: 3,
+            maxLines: 6,
+            decoration: InputDecoration(
+              labelText: 'Investigation notes',
+              hintText: 'Misal: customer se baat hui, address confirm, courier complaint/reference...',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          if (canEdit) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _savingReturnInvestigation ? null : _saveReturnInvestigation,
+                icon: _savingReturnInvestigation
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save_outlined),
+                label: Text(_savingReturnInvestigation ? 'Saving...' : 'Save Investigation Notes'),
+              ),
+            ),
+          ],
+          if (data['returnInvestigationUpdatedAt'] != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Last saved by: ${(data['returnInvestigationUpdatedBy'] ?? 'Unknown').toString()}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _syncOrder(BuildContext context, OrderData order) async {
     if (syncing) return;
@@ -2096,6 +2218,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ]),
               const SizedBox(height: 14),
               _statusHistorySection(widget.orderId),
+              const SizedBox(height: 14),
+              _returnInvestigationSection(order: order, data: doc.data() ?? <String, dynamic>{}, canEdit: canEdit),
               const SizedBox(height: 14),
               _receiptSection(context, order.receiptUrls),
               const SizedBox(height: 18),
