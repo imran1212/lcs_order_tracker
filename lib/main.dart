@@ -9,10 +9,94 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:workmanager/workmanager.dart';
+
+// LCS_BACKGROUND_AUTO_SYNC_V1
+const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
+
+@pragma('vm:entry-point')
+void lcsBackgroundCallbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    if (task != _lcsBackgroundSyncTask) return true;
+    try {
+      await Firebase.initializeApp();
+      final auth = FirebaseAuth.instance;
+      var user = auth.currentUser;
+      if (user == null) {
+        try {
+          user = await auth.authStateChanges().first.timeout(const Duration(seconds: 15));
+        } catch (_) {
+          user = null;
+        }
+      }
+      if (user == null) {
+        debugPrint('LCS background sync skipped: no signed-in user.');
+        return true;
+      }
+
+      final query = await FirebaseFirestore.instance
+          .collection('orders')
+          .where('workerUid', isEqualTo: user.uid)
+          .limit(10)
+          .get();
+      for (final doc in query.docs) {
+        final data = doc.data();
+        final cn = (data['cn'] ?? '').toString().trim();
+        if (cn.isEmpty) continue;
+        final lastSyncRaw = data['lastApiSyncAt'];
+        if (lastSyncRaw is Timestamp &&
+            DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
+          continue;
+        }
+        try {
+          final previousStatus = (data['status'] ?? 'Pending API Sync').toString().trim();
+          final result = await LcsApiService.syncCn(cn);
+          await doc.reference.update({
+            'status': result.status,
+            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+            'lastApiSyncAt': FieldValue.serverTimestamp(),
+            'lcsRawStatus': result.status,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          if (previousStatus != result.status.trim()) {
+            final dateKey = (result.statusDate ?? DateTime.now()).toUtc().toIso8601String()
+                .replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+            final eventId = 'background_${result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_$dateKey';
+            await doc.reference.collection('lcsStatusHistory').doc(eventId).set({
+              'cn': cn,
+              'previousStatus': previousStatus,
+              'status': result.status.trim(),
+              'source': 'background_auto_sync',
+              'activityDate': result.statusDate == null
+                  ? Timestamp.now()
+                  : Timestamp.fromDate(result.statusDate!),
+              'recordedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
+        } catch (error) {
+          debugPrint('LCS background sync failed for order ${doc.id}: $error');
+        }
+      }
+      return true;
+    } catch (error) {
+      debugPrint('LCS background sync task failed: $error');
+      return false;
+    }
+  });
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  await Workmanager().initialize(lcsBackgroundCallbackDispatcher);
+  await Workmanager().registerPeriodicTask(
+    'lcs-order-auto-sync-periodic',
+    _lcsBackgroundSyncTask,
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(networkType: NetworkType.connected),
+    existingWorkPolicy: ExistingWorkPolicy.keep,
+  );
   runApp(const LcsOrderTrackerApp());
 }
 
