@@ -2,6 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lcs_order_tracker/main.dart';
 
 void main() {
+  group('LCS tracking date parsing', () {
+    test('parses day/month/year dates from LCS status history', () {
+      final parsed = LcsApiService.tryParseDate('08/10/2026');
+      expect(parsed, isNotNull);
+      expect(parsed!.day, 8);
+      expect(parsed.month, 10);
+      expect(parsed.year, 2026);
+    });
+
+    test('parses ISO timestamps from LCS API', () {
+      final parsed = LcsApiService.tryParseDate('2026-10-12 10:39:00');
+      expect(parsed, isNotNull);
+      expect(parsed!.day, 12);
+      expect(parsed.month, 10);
+      expect(parsed.year, 2026);
+    });
+  });
+
   group('LCS dashboard status classification', () {
     test('classifies pending API sync separately', () {
       expect(
