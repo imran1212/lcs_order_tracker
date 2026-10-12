@@ -233,7 +233,6 @@ class LcsApiService {
 
     final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
     final details = _maps(detail);
-    Map<String, dynamic>? latestDatedItem;
     DateTime? latestEventDate;
     for (final item in details) {
       final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ??
@@ -243,9 +242,8 @@ class LcsApiService {
       final itemDate = _dateFromMap(item);
       if (itemDate != null && (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
         latestEventDate = itemDate;
-        latestDatedItem = item;
         if (itemStatus.isNotEmpty) status = itemStatus;
-      } else if (itemDate == null && latestDatedItem == null && itemStatus.isNotEmpty) {
+      } else if (itemDate == null && latestEventDate == null && itemStatus.isNotEmpty) {
         status = itemStatus;
       }
       if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
@@ -732,14 +730,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final delivered = status.contains('delivered') && !status.contains('undelivered');
       return !delivered && order.cn.trim().isNotEmpty;
     }).toList();
-
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sync ke liye koi non-delivered order nahi mila.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync ke liye koi non-delivered order nahi mila.')));
       return;
     }
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -752,13 +746,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-
-    setState(() {
-      _bulkSyncingOrders = true;
-      _bulkSyncCompleted = 0;
-      _bulkSyncTotal = targets.length;
-    });
-
+    setState(() { _bulkSyncingOrders = true; _bulkSyncCompleted = 0; _bulkSyncTotal = targets.length; });
     var succeeded = 0;
     var failed = 0;
     try {
@@ -779,9 +767,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final statusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
             final timeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
             await ref.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
-              'cn': order.cn,
-              'previousStatus': order.status.trim(),
-              'status': result.status.trim(),
+              'cn': order.cn, 'previousStatus': order.status.trim(), 'status': result.status.trim(),
               'source': 'dashboard_bulk_sync',
               'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
               'recordedAt': FieldValue.serverTimestamp(),
@@ -797,9 +783,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } finally {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('LCS sync complete: $succeeded updated, $failed failed. Delivered orders skipped.')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('LCS sync complete: $succeeded updated, $failed failed. Delivered orders skipped.')));
       }
     }
   }
@@ -1186,22 +1170,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: _bulkSyncingOrders
-                        ? null
-                        : () => _syncAllNonDeliveredOrders(
-                              docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
-                            ),
+                    onPressed: _bulkSyncingOrders ? null : () => _syncAllNonDeliveredOrders(
+                      docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
+                    ),
                     icon: _bulkSyncingOrders
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.sync_rounded),
                     label: Text(_bulkSyncingOrders
                         ? 'Syncing $_bulkSyncCompleted/$_bulkSyncTotal orders...'
                         : 'Sync All Orders (Except Delivered)'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF1769E0),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                    ),
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1769E0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
                   ),
                 ),
 
