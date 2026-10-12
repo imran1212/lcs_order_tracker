@@ -295,23 +295,16 @@ class LcsApiService {
     final events = <Map<String, dynamic>>[];
     void visit(dynamic value, {bool isRoot = false}) {
       if (value is Map) {
-        final map = Map<String, dynamic>.from(value);
-        if (!isRoot) {
-          final hasEventText = map.entries.any((entry) {
-            final key = _normalizedKey(entry.key);
-            return (key.contains('status') ||
-                    key.contains('activity') ||
-                    key.contains('description') ||
-                    key.contains('event') ||
-                    key.contains('remark')) &&
-                entry.value is String &&
-                (entry.value as String).trim().isNotEmpty;
-          });
-          if (hasEventText) events.add(map);
-        }
+        if (!isRoot) events.add(Map<String, dynamic>.from(value));
         for (final entry in value.entries) {
           if (entry.value is Map || entry.value is List) {
             visit(entry.value);
+          } else if (entry.value is String &&
+              entry.key.toString().toLowerCase().contains('tracking')) {
+            try {
+              final decoded = jsonDecode(entry.value as String);
+              if (decoded is Map || decoded is List) visit(decoded);
+            } catch (_) {}
           }
         }
       } else if (value is List) {
@@ -322,6 +315,33 @@ class LcsApiService {
     }
     visit(packet, isRoot: true);
     return events;
+  }
+
+  static String _eventStatusFromMap(Map map) {
+    final direct = _mapValue(map, [
+      'status', 'Staus', 'activity', 'tracking_status', 'Tracking Status',
+      'status_description', 'Status Description', 'event_status',
+      'description', 'remarks', 'remark', 'event_description',
+      'tracking_status_description',
+    ]);
+    if (direct != null && direct.toString().trim().isNotEmpty) {
+      return direct.toString().trim();
+    }
+    for (final entry in map.entries) {
+      if (entry.value is! String) continue;
+      final text = (entry.value as String).trim();
+      final normalized = text.toLowerCase();
+      if (normalized.contains('return to shipper') ||
+          normalized.contains('returned to shipper') ||
+          normalized.contains('returning to shipper') ||
+          normalized.contains('ready for return') ||
+          normalized.contains('ready to return') ||
+          normalized == 'rts' ||
+          (normalized.contains('delivered') && !normalized.contains('undelivered')) ||
+          normalized.contains('arrived at station') ||
+          normalized.contains('arrived in ')) return text;
+    }
+    return '';
   }
 
   static Future<LcsSyncResult> syncCn(String cn) async {
@@ -340,8 +360,17 @@ class LcsApiService {
       'Tracking Detail', 'tracking_detail', 'trackingDetail',
       'tracking_history', 'trackingHistory', 'tracking_details',
     ]);
-    final details = _trackingEventMaps(packet);
-    if (details.isEmpty) details.addAll(_maps(detail));
+    final details = <Map<String, dynamic>>[
+      ..._maps(detail),
+      ..._trackingEventMaps(packet),
+    ];
+    if (detail is String) {
+      try {
+        final decodedDetail = jsonDecode(detail);
+        details.addAll(_maps(decodedDetail));
+        details.addAll(_trackingEventMaps({'history': decodedDetail}));
+      } catch (_) {}
+    }
     DateTime? latestEventDate;
     DateTime? latestTerminalEventDate;
     String? latestTerminalStatus;
@@ -361,12 +390,7 @@ class LcsApiService {
     }
 
     for (final item in details) {
-      final itemStatus = (_mapValue(item, [
-        'status', 'Staus', 'activity', 'tracking_status', 'Tracking Status',
-        'status_description', 'event_status', 'description', 'remarks',
-        'event_description', 'tracking_status_description',
-      ]) ?? '')
-          .toString().trim();
+      final itemStatus = _eventStatusFromMap(item);
       final itemDate = _dateFromMap(item);
       if (itemDate != null && (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
         latestEventDate = itemDate;
