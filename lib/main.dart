@@ -107,6 +107,50 @@ void main() async {
   runApp(const LcsOrderTrackerApp());
 }
 
+class AQASLogoMark extends StatelessWidget {
+  final double size;
+  const AQASLogoMark({super.key, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(size * .22),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(color: const Color(0xFF006B3C)),
+            Align(
+              alignment: const Alignment(0, -.58),
+              child: Text('AQAS', style: TextStyle(color: Colors.white, fontSize: size * .22, fontWeight: FontWeight.w900, letterSpacing: size * .025)),
+            ),
+            Align(
+              alignment: const Alignment(0, .03),
+              child: Container(
+                height: size * .37,
+                width: size * .94,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD7192D),
+                  border: Border.all(color: const Color(0xFFFFD21C), width: size * .018),
+                  borderRadius: BorderRadius.circular(size),
+                ),
+                alignment: Alignment.center,
+                child: Text('AQAS', style: TextStyle(color: const Color(0xFFFFE52B), fontSize: size * .22, fontWeight: FontWeight.w900)),
+              ),
+            ),
+            Align(
+              alignment: const Alignment(0, .66),
+              child: Icon(Icons.local_shipping_rounded, color: Colors.white, size: size * .28),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class LcsOrderTrackerApp extends StatelessWidget {
   const LcsOrderTrackerApp({super.key});
 
@@ -692,11 +736,7 @@ final loginEmail = email.contains('@')
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.asset('assets/aqas_logo.jpg', width: 92, height: 92, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 46)),
-                  ),
+                  child: const AQASLogoMark(size: 92),
                 ),
 
                 const SizedBox(height: 24),
@@ -1245,10 +1285,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 color: const Color(0xFF087A46),
                 borderRadius: BorderRadius.circular(13),
               ),
-              child: const Icon(
-                Icons.local_shipping_rounded,
-                color: Colors.white,
-              ),
+              child: const AQASLogoMark(size: 42),
             ),
             const SizedBox(width: 12),
             const Column(
