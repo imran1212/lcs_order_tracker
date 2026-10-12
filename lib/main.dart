@@ -1499,6 +1499,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
         dateFilterType != 'Booking Date';
   }
 
+  // LCS_STATUS_BUCKETING_V2: group real carrier status variants into dashboard buckets.
+  String _statusBucket(String rawStatus) {
+    final s = rawStatus.toLowerCase().trim().replaceAll(RegExp(r'[_-]+'), ' ');
+    if (s.isEmpty) return 'other';
+    if (s.contains('pending api sync') || s.contains('pending sync')) return 'pending';
+    if (s.contains('delivered') && !s.contains('undelivered')) return 'delivered';
+    if (s.contains('return') || s.contains('returned') || s == 'rts') return 'returned';
+    if (s.contains('out for delivery') || s.contains('out for deliver')) return 'out';
+    if (s.contains('in transit') || s.contains('arrived at station') ||
+        s.contains('departed') || s.contains('dispatched') ||
+        s.contains('picked up') || s.contains('picked-up') ||
+        s.contains('received at') || s.contains('forwarded') ||
+        s.contains('shipment booked') || s.contains('booked') ||
+        s == 'ar' || s.startsWith('ar ')) {
+      return 'transit';
+    }
+    return 'other';
+  }
+
   // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
   Widget _workerPerformanceReport(List<OrderData> allOrders) {
     final grouped = <String, List<OrderData>>{};
@@ -1515,8 +1534,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ..sort((a, b) => b.value.length.compareTo(a.value.length));
     final shown = entries.take(5).toList();
 
-    int countStatus(List<OrderData> items, bool Function(String) test) =>
-        items.where((o) => test(o.status.toLowerCase().trim())).length;
+    int countStatus(List<OrderData> items, String bucket) =>
+        items.where((o) => _statusBucket(o.status) == bucket).length;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1546,12 +1565,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 10),
           ...shown.map((entry) {
             final items = entry.value;
-            final delivered = countStatus(items, (s) => s.contains('deliver') && !s.contains('undeliver'));
-            final returned = countStatus(items, (s) => s.contains('return'));
-            final failed = countStatus(items, (s) =>
-                s.contains('attempt') || s.contains('undeliver') ||
-                s.contains('failed') || s == 'pn1' || s == 'pn2');
-            final pending = countStatus(items, (s) => s == 'pending api sync');
+            final delivered = countStatus(items, 'delivered');
+            final returned = countStatus(items, 'returned');
+            final failed = items.where((o) {
+              final s = o.status.toLowerCase().trim();
+              return s.contains('attempt') || s.contains('undeliver') ||
+                  s.contains('failed') || s == 'pn1' || s == 'pn2';
+            }).length;
+            final pending = countStatus(items, 'pending');
             final deliveryRate = items.isEmpty ? 0 : (delivered * 100 / items.length).round();
             return Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -1609,19 +1630,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     int outForDelivery = 0;
     int returned = 0;
     int pendingSync = 0;
+    int otherStatus = 0;
 
     for (final order in orders) {
-      final status = order.status.trim();
-      if (status == 'Delivered') {
-        delivered++;
-      } else if (status == 'In Transit') {
-        inTransit++;
-      } else if (status == 'Out for Delivery') {
-        outForDelivery++;
-      } else if (status == 'Returned') {
-        returned++;
-      } else if (status == 'Pending API Sync') {
-        pendingSync++;
+      switch (_statusBucket(order.status)) {
+        case 'delivered':
+          delivered++;
+          break;
+        case 'transit':
+          inTransit++;
+          break;
+        case 'out':
+          outForDelivery++;
+          break;
+        case 'returned':
+          returned++;
+          break;
+        case 'pending':
+          pendingSync++;
+          break;
+        default:
+          otherStatus++;
       }
     }
 
@@ -1639,6 +1668,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _statCard('Out for Delivery', outForDelivery.toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
         _statCard('Delivered', delivered.toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
         _statCard('Returned', returned.toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
+        _statCard('Other Status', otherStatus.toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
       ],
     );
   }
