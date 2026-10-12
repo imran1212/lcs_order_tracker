@@ -1711,67 +1711,106 @@ class _DashboardScreenState extends State<DashboardScreen> {
       '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   Widget _welcomeCard() {
-    final name =
-        (widget.userData['name'] ?? role).toString();
+    final name = (widget.userData['name'] ?? role).toString();
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFF1769E0),
-            Color(0xFF3D8BFF),
-          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF056839), Color(0xFF078B50), Color(0xFF18A968)],
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF087A46).withOpacity(.20),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
+            color: const Color(0xFF087A46).withOpacity(.22),
+            blurRadius: 20,
+            offset: const Offset(0, 9),
           ),
         ],
       ),
-      child: Row(
+      child: Stack(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Welcome 👋',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(.75),
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  isAdmin
-                      ? 'Admin Dashboard'
-                      : 'Worker Dashboard',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(.85),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+          Positioned(
+            right: -18,
+            top: -28,
+            child: Container(
+              width: 118,
+              height: 118,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(.07),
+              ),
             ),
           ),
-          const Icon(
-            Icons.local_shipping_rounded,
-            color: Colors.white,
-            size: 54,
+          Positioned(
+            right: 24,
+            bottom: -42,
+            child: Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withOpacity(.12), width: 14),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Welcome back 👋',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(.82),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -.4,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      isAdmin ? 'Admin Dashboard' : 'Worker Dashboard',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(.9),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.14),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: Colors.white.withOpacity(.18)),
+                ),
+                child: const Icon(
+                  Icons.local_shipping_rounded,
+                  color: Colors.white,
+                  size: 40,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1958,19 +1997,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: 1.72,
+      childAspectRatio: 1.58,
       children: [
         _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF087A46)),
-        _statCard('Pending Sync', count(LcsDashboardStatusCategory.pendingSync).toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
-        _statCard('Pending / Booked', count(LcsDashboardStatusCategory.pending).toString(), Icons.hourglass_empty_rounded, const Color(0xFF64748B)),
-        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF087A46)),
-        _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
-        _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
-        _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
-        _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFB45309)),
-        _statCard('Ready to Return', count(LcsDashboardStatusCategory.readyToReturn).toString(), Icons.assignment_return_rounded, const Color(0xFFD97706)),
-        _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
-        _statCard('Returned', count(LcsDashboardStatusCategory.returned).toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
+        _statCard('Pending Sync', count(LcsDashboardStatusCategory.pendingSync).toString(), Icons.sync_rounded, const Color(0xFF1687E8)),
+        _statCard('Pending / Booked', count(LcsDashboardStatusCategory.pending).toString(), Icons.hourglass_empty_rounded, const Color(0xFFF39A16)),
+        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF159B63)),
+        _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF8654E8)),
+        _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2678E8)),
+        _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFE99A13)),
+        _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFE54858)),
+        _statCard('Ready to Return', count(LcsDashboardStatusCategory.readyToReturn).toString(), Icons.assignment_return_rounded, const Color(0xFFF06435)),
+        _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF159B63)),
+        _statCard('Returned', count(LcsDashboardStatusCategory.returned).toString(), Icons.keyboard_return_rounded, const Color(0xFFE54858)),
         _statCard('Other Status', count(LcsDashboardStatusCategory.other).toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
       ],
     );
@@ -1982,33 +2021,73 @@ class _DashboardScreenState extends State<DashboardScreen> {
     IconData icon,
     Color color,
   ) {
+    final isTotal = title == 'Total Orders';
+    final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
+    final foreground = isTotal ? Colors.white : const Color(0xFF182522);
+    final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
+
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(19),
-      ),
-      child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 24),
-          const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-            ),
+        color: cardBackground,
+        gradient: isTotal
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF056839), Color(0xFF0B8B50), Color(0xFF18A968)],
+              )
+            : null,
+        borderRadius: BorderRadius.circular(22),
+        border: isTotal ? null : Border.all(color: color.withOpacity(.10), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: (isTotal ? const Color(0xFF087A46) : color).withOpacity(isTotal ? .18 : .08),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
           ),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey.shade600,
-              fontWeight: FontWeight.w600,
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 43,
+            height: 48,
+            decoration: BoxDecoration(
+              color: isTotal ? Colors.white.withOpacity(.16) : color.withOpacity(.12),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(icon, color: isTotal ? Colors.white : color, size: 25),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 25,
+                    height: 1.05,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -.5,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: mutedForeground,
+                    fontSize: 10.5,
+                    height: 1.15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
