@@ -20,6 +20,34 @@ void main() {
     });
   });
 
+  group('LCS status filter matching', () {
+    test('matches actual courier transit status text to dashboard category', () {
+      expect(
+        matchesLcsStatusFilter('Forwarded to KOHAT', 'In Transit / Dispatched'),
+        isTrue,
+      );
+      expect(
+        matchesLcsStatusFilter('Arrived at Station in HYDERABAD', 'Arrived at Station'),
+        isTrue,
+      );
+    });
+
+    test('does not mix delivered and undelivered statuses', () {
+      expect(matchesLcsStatusFilter('Delivered', 'Delivered'), isTrue);
+      expect(matchesLcsStatusFilter('Undelivered', 'Delivered'), isFalse);
+      expect(matchesLcsStatusFilter('Undelivered', 'Delivery Issue'), isTrue);
+    });
+
+    test('matches return and pending statuses using categories', () {
+      expect(matchesLcsStatusFilter('Return to Shipper', 'Returned'), isTrue);
+      expect(matchesLcsStatusFilter('Pickup Request not Send', 'Pending / Booked'), isTrue);
+    });
+
+    test('All filter leaves every status visible', () {
+      expect(matchesLcsStatusFilter('Some new LCS status', 'All'), isTrue);
+    });
+  });
+
   group('LCS dashboard status classification', () {
     test('classifies pending API sync separately', () {
       expect(
