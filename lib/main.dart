@@ -355,6 +355,29 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
   return LcsDashboardStatusCategory.other;
 }
 
+bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
+  if (selectedFilter == 'All') return true;
+
+  const categoryByLabel = <String, LcsDashboardStatusCategory>{
+    'Pending API Sync': LcsDashboardStatusCategory.pendingSync,
+    'Pending / Booked': LcsDashboardStatusCategory.pending,
+    'Shipment Picked': LcsDashboardStatusCategory.shipmentPicked,
+    'In Transit / Dispatched': LcsDashboardStatusCategory.inTransit,
+    'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
+    'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
+    'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
+    'Delivered': LcsDashboardStatusCategory.delivered,
+    'Returned': LcsDashboardStatusCategory.returned,
+    'Other Status': LcsDashboardStatusCategory.other,
+  };
+
+  final expected = categoryByLabel[selectedFilter];
+  if (expected == null) {
+    return rawStatus.trim().toLowerCase() == selectedFilter.trim().toLowerCase();
+  }
+  return classifyLcsDashboardStatus(rawStatus) == expected;
+}
+
 // ============================================================
 // AUTH GATE - restore the Firebase session when app is reopened
 // ============================================================
@@ -530,9 +553,19 @@ final loginEmail = email.contains('@')
         return;
       }
 
-      // AuthGate listens to authStateChanges and opens the dashboard.
-      // Firebase keeps the session across app restarts unless user signs out.
-      if (mounted) setState(() => loading = false);
+      // Open the dashboard immediately after successful credential + profile
+      // validation. This avoids leaving the login screen visible until the app
+      // is restarted on devices where the auth-state UI update is delayed.
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute<void>(
+            builder: (_) => DashboardScreen(
+              userData: Map<String, dynamic>.from(data),
+            ),
+          ),
+          (route) => false,
+        );
+      }
       return;
     } on FirebaseAuthException catch (e) {
       String message = 'Login failed';
@@ -747,6 +780,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
   bool _showAllStationDelayedOrders = false;
+  final TextEditingController _searchController = TextEditingController();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
 
   @override
   void initState() {
@@ -760,7 +795,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .where('workerUid', isEqualTo: workerUid)
             .orderBy('createdAt', descending: true);
 
-    _statusNotificationSubscription = orders.snapshots().listen((snapshot) {
+    // Reuse one stream for the screen lifetime. Creating snapshots() inside
+    // build caused every search keystroke/filter change to restart the stream,
+    // replace the list with a spinner, and lose text-field focus.
+    _ordersStream = orders.snapshots();
+    _statusNotificationSubscription = _ordersStream.listen((snapshot) {
       if (!mounted) return;
       for (final change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.removed) continue;
@@ -796,6 +835,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _statusNotificationSubscription?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -1134,15 +1174,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ordersQuery = isAdmin
-        ? FirebaseFirestore.instance
-            .collection('orders')
-            .orderBy('createdAt', descending: true)
-        : FirebaseFirestore.instance
-            .collection('orders')
-            .where('workerUid', isEqualTo: workerUid)
-            .orderBy('createdAt', descending: true);
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -1206,7 +1237,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: ordersQuery.snapshots(),
+        stream: _ordersStream,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(
@@ -1238,8 +1269,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 order.cn.toLowerCase().contains(q) ||
                 order.destination.toLowerCase().contains(q);
 
-            final matchesStatus = statusFilter == 'All' ||
-                order.status == statusFilter;
+            final matchesStatus =
+                matchesLcsStatusFilter(order.status, statusFilter);
 
             final matchesWorker = workerFilter == 'All' ||
                 order.workerUid == workerFilter;
@@ -1333,6 +1364,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 12),
 
                 TextField(
+                  controller: _searchController,
+                  textInputAction: TextInputAction.search,
                   onChanged: (value) {
                     setState(() {
                       searchText = value;
@@ -1371,10 +1404,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         items: const [
                           'All',
                           'Pending API Sync',
-                          'In Transit',
+                          'Pending / Booked',
+                          'Shipment Picked',
+                          'In Transit / Dispatched',
+                          'Arrived at Station',
                           'Out for Delivery',
+                          'Delivery Issue',
                           'Delivered',
                           'Returned',
+                          'Other Status',
                         ].map((item) => DropdownMenuItem<String>(
                           value: item,
                           child: Text(item, overflow: TextOverflow.ellipsis),
@@ -1470,6 +1508,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     alignment: Alignment.centerRight,
                     child: TextButton.icon(
                       onPressed: () {
+                        _searchController.clear();
                         setState(() {
                           searchText = '';
                           dateFrom = null;
@@ -2070,6 +2109,7 @@ Widget _emptyState({bool hasActiveFilters = false}) {
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: () {
+              _searchController.clear();
               setState(() {
                 searchText = '';
                 dateFrom = null;
