@@ -252,7 +252,7 @@ class LcsApiService {
         status = itemStatus;
       }
       if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
-        if (deliveryDate == null || itemDate.isAfter(deliveryDate!)) {
+        if (deliveryDate == null || itemDate.isAfter(deliveryDate)) {
           deliveryDate = itemDate;
         }
       }
