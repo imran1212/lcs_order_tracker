@@ -40,6 +40,8 @@ void main() {
 
     test('matches return and pending statuses using categories', () {
       expect(matchesLcsStatusFilter('Return to Shipper', 'Returned'), isTrue);
+      expect(matchesLcsStatusFilter('Ready for Return - CONSIGNEE REFUSED', 'Ready to Return'), isTrue);
+      expect(matchesLcsStatusFilter('Ready for Return - CONSIGNEE REFUSED', 'Delivered'), isFalse);
       expect(matchesLcsStatusFilter('Pickup Request not Send', 'Pending / Booked'), isTrue);
     });
 
@@ -103,6 +105,17 @@ void main() {
       expect(
         classifyLcsDashboardStatus('Return to Shipper'),
         LcsDashboardStatusCategory.returned,
+      );
+    });
+
+    test('classifies Ready for Return separately from Delivered and Returned', () {
+      expect(
+        classifyLcsDashboardStatus('Ready for Return - CONSIGNEE REFUSED'),
+        LcsDashboardStatusCategory.readyToReturn,
+      );
+      expect(
+        classifyLcsDashboardStatus('Ready to Return'),
+        LcsDashboardStatusCategory.readyToReturn,
       );
     });
 
