@@ -43,6 +43,11 @@ void lcsBackgroundCallbackDispatcher() {
         final data = doc.data();
         final cn = (data['cn'] ?? '').toString().trim();
         if (cn.isEmpty) continue;
+        final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
+        final isDelivered = (currentStatus.contains('delivered') &&
+                !currentStatus.contains('undelivered')) ||
+            currentStatus == 'delivery completed';
+        if (isDelivered) continue;
         final lastSyncRaw = data['lastApiSyncAt'];
         if (lastSyncRaw is Timestamp &&
             DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
@@ -278,6 +283,76 @@ class LcsSyncResult {
     this.deliveryDate,
     required this.rawPacket,
   });
+}
+
+enum LcsDashboardStatusCategory {
+  pendingSync,
+  pending,
+  shipmentPicked,
+  inTransit,
+  arrivedAtStation,
+  outForDelivery,
+  deliveryIssue,
+  delivered,
+  returned,
+  other,
+}
+
+LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
+  final status = rawStatus.toLowerCase().trim();
+  if (status.isEmpty || status == 'unknown status') {
+    return LcsDashboardStatusCategory.other;
+  }
+  if (status.contains('pending api sync') || status.contains('sync pending')) {
+    return LcsDashboardStatusCategory.pendingSync;
+  }
+  if ((status.contains('delivered') && !status.contains('undelivered')) ||
+      status == 'delivery completed') {
+    return LcsDashboardStatusCategory.delivered;
+  }
+  if (status.contains('return') || status == 'rts') {
+    return LcsDashboardStatusCategory.returned;
+  }
+  if (status.contains('out for delivery') || status == 'ofd') {
+    return LcsDashboardStatusCategory.outForDelivery;
+  }
+  if (status.contains('undelivered') ||
+      status.contains('failed delivery') ||
+      status.contains('delivery failed') ||
+      status.contains('customer not available') ||
+      status.contains('incomplete address') ||
+      status.contains('refused delivery')) {
+    return LcsDashboardStatusCategory.deliveryIssue;
+  }
+  if (status.contains('arrived at station') ||
+      status.contains('arrived in ') ||
+      status.contains('arrived at ') ||
+      status.contains('reached destination') ||
+      status.contains('at destination station')) {
+    return LcsDashboardStatusCategory.arrivedAtStation;
+  }
+  if (status.contains('in transit') ||
+      status.contains('dispatched') ||
+      status.contains('forwarded') ||
+      status.contains('departed') ||
+      status.contains('on the way')) {
+    return LcsDashboardStatusCategory.inTransit;
+  }
+  if (status == 'pending' ||
+      status.contains('booking') ||
+      status.contains('awaiting pickup') ||
+      status.contains('manifest') ||
+      status.contains('pickup request not send') ||
+      status.contains('pickup request not sent')) {
+    return LcsDashboardStatusCategory.pending;
+  }
+  if (status.contains('shipment picked') ||
+      status.contains('picked up') ||
+      status.contains('pickup request') ||
+      status == 'pickup') {
+    return LcsDashboardStatusCategory.shipmentPicked;
+  }
+  return LcsDashboardStatusCategory.other;
 }
 
 // ============================================================
@@ -1720,51 +1795,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _statsRow(List<OrderData> orders) {
-    var pendingSync = 0;
-    var pending = 0;
-    var shipmentPicked = 0;
-    var inTransit = 0;
-    var arrivedAtStation = 0;
-    var outForDelivery = 0;
-    var delivered = 0;
-    var returned = 0;
-    var otherStatus = 0;
-
+    final counts = <LcsDashboardStatusCategory, int>{};
     for (final order in orders) {
-      final status = order.status.toLowerCase().trim();
-      if (status.isEmpty || status == 'unknown status') {
-        otherStatus++;
-      } else if (status.contains('pending api sync') || status.contains('sync pending')) {
-        pendingSync++;
-      } else if ((status.contains('delivered') && !status.contains('undelivered')) ||
-          status == 'delivery completed') {
-        delivered++;
-      } else if (status.contains('return') || status == 'rts' ||
-          status.contains('return to shipper')) {
-        returned++;
-      } else if (status.contains('out for delivery') || status == 'ofd') {
-        outForDelivery++;
-      } else if (status.contains('arrived at station') ||
-          status.contains('arrived in ') ||
-          status.contains('arrived at ') ||
-          status.contains('reached destination') ||
-          status.contains('at destination station')) {
-        arrivedAtStation++;
-      } else if (status.contains('in transit') || status.contains('dispatched') ||
-          status.contains('forwarded') || status.contains('departed') ||
-          status.contains('on the way')) {
-        inTransit++;
-      } else if (status.contains('shipment picked') || status.contains('picked up') ||
-          status.contains('pickup request') || status.contains('booked') ||
-          status == 'pickup') {
-        shipmentPicked++;
-      } else if (status == 'pending' || status.contains('booking') ||
-          status.contains('awaiting pickup') || status.contains('manifest')) {
-        pending++;
-      } else {
-        otherStatus++;
-      }
+      final category = classifyLcsDashboardStatus(order.status);
+      counts[category] = (counts[category] ?? 0) + 1;
     }
+    int count(LcsDashboardStatusCategory category) => counts[category] ?? 0;
 
     return GridView.count(
       crossAxisCount: 2,
@@ -1775,15 +1811,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       childAspectRatio: 1.72,
       children: [
         _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF1769E0)),
-        _statCard('Pending Sync', pendingSync.toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
-        _statCard('Pending / Booked', pending.toString(), Icons.hourglass_empty_rounded, const Color(0xFF64748B)),
-        _statCard('Shipment Picked', shipmentPicked.toString(), Icons.inventory_rounded, const Color(0xFF0D9488)),
-        _statCard('In Transit / Dispatched', inTransit.toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
-        _statCard('Arrived at Station', arrivedAtStation.toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
-        _statCard('Out for Delivery', outForDelivery.toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
-        _statCard('Delivered', delivered.toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
-        _statCard('Returned', returned.toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
-        _statCard('Other Status', otherStatus.toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
+        _statCard('Pending Sync', count(LcsDashboardStatusCategory.pendingSync).toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
+        _statCard('Pending / Booked', count(LcsDashboardStatusCategory.pending).toString(), Icons.hourglass_empty_rounded, const Color(0xFF64748B)),
+        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF0D9488)),
+        _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
+        _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
+        _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
+        _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFB45309)),
+        _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
+        _statCard('Returned', count(LcsDashboardStatusCategory.returned).toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
+        _statCard('Other Status', count(LcsDashboardStatusCategory.other).toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
       ],
     );
   }
