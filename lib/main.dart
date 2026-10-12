@@ -166,7 +166,7 @@ class LcsOrderTrackerApp extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: appPaletteIndex,
       builder: (context, paletteIndex, _) {
-        final accent = aqasPaletteColors[paletteIndex.clamp(0, aqasPaletteColors.length - 1)];
+        final accent = aqasPaletteColors[paletteIndex.clamp(0, aqasPaletteColors.length - 1).toInt()];
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'LCS Tracker by AQAS',
@@ -1743,7 +1743,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       floatingActionButton: FloatingActionButton(
         heroTag: 'aqas_add_order_nav',
         onPressed: _openAddOrder,
-        backgroundColor: aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)],
+        backgroundColor: aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()],
         foregroundColor: Colors.white,
         child: const Icon(Icons.add_rounded, size: 32),
       ),
@@ -1782,7 +1782,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _bottomNavItem(int index, IconData icon, String label) {
     final selected = _bottomNavIndex == index;
-    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)];
+    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()];
     return Expanded(
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -3248,8 +3248,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ? const [Color(0xFF078447), Color(0xFF22B573)]
                 : category == LcsDashboardStatusCategory.deliveryIssue
                     ? const [Color(0xFFB42318), Color(0xFFEF4444)]
-                    : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)],
-                       Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)], Colors.white, .2)!];
+                    : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()],
+                       Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Colors.white, .2)!];
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
