@@ -343,6 +343,7 @@ enum LcsDashboardStatusCategory {
   arrivedAtStation,
   outForDelivery,
   deliveryIssue,
+  readyToReturn,
   delivered,
   returned,
   other,
@@ -355,6 +356,12 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
   }
   if (status.contains('pending api sync') || status.contains('sync pending')) {
     return LcsDashboardStatusCategory.pendingSync;
+  }
+  if (status.contains('ready for return') ||
+      status.contains('ready to return') ||
+      status.contains('consignee refused') ||
+      status.contains('refused delivery')) {
+    return LcsDashboardStatusCategory.readyToReturn;
   }
   if ((status.contains('delivered') && !status.contains('undelivered')) ||
       status == 'delivery completed') {
@@ -416,6 +423,7 @@ bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
     'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
     'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
     'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
+    'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
     'Delivered': LcsDashboardStatusCategory.delivered,
     'Returned': LcsDashboardStatusCategory.returned,
     'Other Status': LcsDashboardStatusCategory.other,
@@ -1460,6 +1468,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           'Arrived at Station',
                           'Out for Delivery',
                           'Delivery Issue',
+                          'Ready to Return',
                           'Delivered',
                           'Returned',
                           'Other Status',
@@ -1921,6 +1930,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
         _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
         _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFB45309)),
+        _statCard('Ready to Return', count(LcsDashboardStatusCategory.readyToReturn).toString(), Icons.assignment_return_rounded, const Color(0xFFD97706)),
         _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
         _statCard('Returned', count(LcsDashboardStatusCategory.returned).toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
         _statCard('Other Status', count(LcsDashboardStatusCategory.other).toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
