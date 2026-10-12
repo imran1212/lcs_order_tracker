@@ -1,0 +1,51 @@
+name: LCS Flutter Verification Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "lib/**"
+      - "test/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "android/**"
+      - ".github/workflows/flutter_ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart and Flutter source
+        run: flutter analyze --no-pub
+
+      - name: Run LCS status classification tests
+        run: flutter test --no-pub
+
+      - name: Build release APK for device testing
+        run: flutter build apk --release --no-pub
+
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcs-tracker-near-final-test-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
