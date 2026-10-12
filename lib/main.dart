@@ -680,6 +680,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _statusNotificationSubscription;
   final Map<String, String> _previousOrderStatuses = <String, String>{};
   bool _hasInitialStatusSnapshot = false;
+  bool _bulkSyncingOrders = false;
+  int _bulkSyncCompleted = 0;
+  int _bulkSyncTotal = 0;
 
   @override
   void initState() {
@@ -731,6 +734,99 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _statusNotificationSubscription?.cancel();
     super.dispose();
   }
+
+  Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
+    if (_bulkSyncingOrders) return;
+    final targets = allOrders.where((order) {
+      final status = order.status.toLowerCase().trim();
+      final isDelivered = status.contains('delivered') && !status.contains('undelivered');
+      return !isDelivered && order.cn.trim().isNotEmpty;
+    }).toList();
+
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync ke liye koi non-delivered order nahi mila.')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sync all active orders?'),
+        content: Text(
+          '${targets.length} orders LCS se sync honge. Delivered orders skip honge. '
+          'Internet aur LCS API response ke mutabiq waqt lag sakta hai.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Start Sync'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _bulkSyncingOrders = true;
+      _bulkSyncCompleted = 0;
+      _bulkSyncTotal = targets.length;
+    });
+
+    var succeeded = 0;
+    var failed = 0;
+    try {
+      for (final order in targets) {
+        if (!mounted) break;
+        try {
+          final result = await LcsApiService.syncCn(order.cn.trim());
+          final orderRef = FirebaseFirestore.instance.collection('orders').doc(order.id);
+          await orderRef.update({
+            'status': result.status,
+            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+            'lastApiSyncAt': FieldValue.serverTimestamp(),
+            'lcsRawStatus': result.status,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          if (order.status.trim() != result.status.trim()) {
+            final statusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+            final timeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+            await orderRef.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
+              'cn': order.cn,
+              'previousStatus': order.status.trim(),
+              'status': result.status.trim(),
+              'source': 'dashboard_bulk_sync',
+              'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
+              'recordedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
+          succeeded++;
+        } catch (error) {
+          failed++;
+          debugPrint('Bulk LCS sync failed for ${order.cn}: $error');
+        }
+        if (mounted) setState(() => _bulkSyncCompleted++);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _bulkSyncingOrders = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('LCS sync complete: $succeeded updated, $failed failed. Delivered orders skipped.'),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    }
+  }
+
 
   // LCS_CUSTOMER_PHONE_AND_BULK_RECEIPTS_V1
   String searchText = '';
@@ -1109,6 +1205,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 16),
 
                 _statsRow(orders),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _bulkSyncingOrders
+                        ? null
+                        : () => _syncAllNonDeliveredOrders(
+                              docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
+                            ),
+                    icon: _bulkSyncingOrders
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.sync_rounded),
+                    label: Text(_bulkSyncingOrders
+                        ? 'Syncing $_bulkSyncCompleted/\$_bulkSyncTotal orders...'
+                        : 'Sync All Orders (Except Delivered)'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF1769E0),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                  ),
+                ),
 
                 if (isAdmin) ...[
                   const SizedBox(height: 14),
