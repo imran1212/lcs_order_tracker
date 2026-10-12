@@ -178,7 +178,7 @@ class LcsApiService {
     return text.isEmpty ? 'Pending API Sync' : text;
   }
 
-  static DateTime? _tryDate(dynamic value) {
+  static DateTime? tryParseDate(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value;
     final text = value.toString().trim();
@@ -187,7 +187,7 @@ class LcsApiService {
     final iso = DateTime.tryParse(text);
     if (iso != null) return iso;
 
-    final m = RegExp(r'^(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?').firstMatch(text);
+    final m = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?').firstMatch(text);
     if (m != null) {
       final day = int.tryParse(m.group(1)!) ?? 0;
       final month = int.tryParse(m.group(2)!) ?? 0;
@@ -210,7 +210,7 @@ class LcsApiService {
       'time', 'created_at', 'updated_at',
     ];
     for (final key in preferredKeys) {
-      final parsed = _tryDate(map[key]);
+      final parsed = tryParseDate(map[key]);
       if (parsed != null) return parsed;
     }
     return null;
