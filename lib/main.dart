@@ -671,6 +671,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _bulkSyncingOrders = false;
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
+  bool _showAllStationDelayedOrders = false;
 
   @override
   void initState() {
@@ -911,29 +912,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   List<OrderData> _stationDelayedOrders(List<OrderData> orders) {
     final now = DateTime.now();
-    return orders.where((order) {
-      final status = order.status.toLowerCase();
-      final atStation = status.contains('station') ||
-          status.contains('arrived at station') ||
-          status.startsWith('ar ');
-      if (!atStation || status.contains('delivered') || status.contains('return')) {
-        return false;
-      }
+    final byCn = <String, OrderData>{};
+
+    // A CN can exist in more than one Firestore document. Keep one alert per
+    // CN and prefer the record that was synced most recently.
+    DateTime freshness(OrderData order) =>
+        order.lastApiSyncAt ?? order.statusDate ?? order.bookingDate ?? DateTime(2000);
+
+    for (final order in orders) {
+      final cnKey = order.cn.trim().toUpperCase();
+      if (cnKey.isEmpty) continue;
+      final status = order.status.toLowerCase().trim();
+      final atStation = status.contains('station') || status.startsWith('ar ');
+      if (!atStation || status.contains('delivered') || status.contains('return')) continue;
       final since = order.statusDate ?? order.lastApiSyncAt ?? order.bookingDate;
-      if (since == null) return false;
-      return now.difference(since) >= _stationDelayThreshold;
-    }).toList()
-      ..sort((a, b) {
-        final aSince = a.statusDate ?? a.lastApiSyncAt ?? a.bookingDate!;
-        final bSince = b.statusDate ?? b.lastApiSyncAt ?? b.bookingDate!;
-        return aSince.compareTo(bSince);
-      });
+      if (since == null || now.difference(since) < _stationDelayThreshold) continue;
+
+      final existing = byCn[cnKey];
+      if (existing == null || freshness(order).isAfter(freshness(existing))) {
+        byCn[cnKey] = order;
+      }
+    }
+
+    final delayed = byCn.values.toList();
+    delayed.sort((a, b) {
+      final aSince = a.statusDate ?? a.lastApiSyncAt ?? a.bookingDate ?? DateTime(2000);
+      final bSince = b.statusDate ?? b.lastApiSyncAt ?? b.bookingDate ?? DateTime(2000);
+      return aSince.compareTo(bSince);
+    });
+    return delayed;
   }
 
   Widget _stationDelayAlert(List<OrderData> orders) {
     final delayed = _stationDelayedOrders(orders);
     if (delayed.isEmpty) return const SizedBox.shrink();
-    final shown = delayed.take(3).toList();
+    final shown = _showAllStationDelayedOrders ? delayed : delayed.take(3).toList();
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -985,12 +998,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             );
           }),
-          if (delayed.length > shown.length)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                '+ ${delayed.length - shown.length} more delayed order(s)',
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF92400E)),
+          if (delayed.length > 3)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() {
+                  _showAllStationDelayedOrders = !_showAllStationDelayedOrders;
+                }),
+                icon: Icon(
+                  _showAllStationDelayedOrders ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  color: const Color(0xFF92400E),
+                ),
+                label: Text(
+                  _showAllStationDelayedOrders
+                      ? 'Show fewer orders'
+                      : '+ ${delayed.length - 3} more delayed order(s) — View all',
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Color(0xFF92400E)),
+                ),
               ),
             ),
         ],
