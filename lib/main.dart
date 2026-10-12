@@ -3239,10 +3239,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _detailHeader(OrderData order) {
+    final category = classifyLcsDashboardStatus(order.status);
+    final List<Color> headerColors = category == LcsDashboardStatusCategory.returned
+        ? const [Color(0xFFE11D2E), Color(0xFFFF4D4D)]
+        : category == LcsDashboardStatusCategory.readyToReturn
+            ? const [Color(0xFFF04A19), Color(0xFFFF812B)]
+            : category == LcsDashboardStatusCategory.delivered
+                ? const [Color(0xFF078447), Color(0xFF22B573)]
+                : category == LcsDashboardStatusCategory.deliveryIssue
+                    ? const [Color(0xFFB42318), Color(0xFFEF4444)]
+                    : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)],
+                       Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)], Colors.white, .2)!];
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF1769E0), Color(0xFF3D8BFF)]),
+        gradient: LinearGradient(colors: headerColors),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Row(
