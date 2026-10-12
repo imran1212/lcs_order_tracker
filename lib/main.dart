@@ -1300,7 +1300,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Text(
                   'Order Management by AQAS',
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 10, color: Color(0xFF616161), fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 const Text(
