@@ -296,7 +296,7 @@ class LcsApiService {
       status = latestTerminalStatus;
       statusDate = latestTerminalEventDate ?? statusDate;
     } else if (undatedTerminalStatus != null) {
-      status = undatedTerminalStatus!;
+      status = undatedTerminalStatus;
     } else if (latestEventDate != null) {
       statusDate = latestEventDate;
     }
