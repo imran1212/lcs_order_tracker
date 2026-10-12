@@ -1720,24 +1720,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _statsRow(List<OrderData> orders) {
-    int delivered = 0;
-    int inTransit = 0;
-    int outForDelivery = 0;
-    int returned = 0;
-    int pendingSync = 0;
+    var pendingSync = 0;
+    var pending = 0;
+    var shipmentPicked = 0;
+    var inTransit = 0;
+    var arrivedAtStation = 0;
+    var outForDelivery = 0;
+    var delivered = 0;
+    var returned = 0;
+    var otherStatus = 0;
 
     for (final order in orders) {
-      final status = order.status.trim();
-      if (status == 'Delivered') {
-        delivered++;
-      } else if (status == 'In Transit') {
-        inTransit++;
-      } else if (status == 'Out for Delivery') {
-        outForDelivery++;
-      } else if (status == 'Returned') {
-        returned++;
-      } else if (status == 'Pending API Sync') {
+      final status = order.status.toLowerCase().trim();
+      if (status.isEmpty || status == 'unknown status') {
+        otherStatus++;
+      } else if (status.contains('pending api sync') || status.contains('sync pending')) {
         pendingSync++;
+      } else if ((status.contains('delivered') && !status.contains('undelivered')) ||
+          status == 'delivery completed') {
+        delivered++;
+      } else if (status.contains('return') || status == 'rts' ||
+          status.contains('return to shipper')) {
+        returned++;
+      } else if (status.contains('out for delivery') || status == 'ofd') {
+        outForDelivery++;
+      } else if (status.contains('arrived at station') ||
+          status.contains('arrived in ') ||
+          status.contains('arrived at ') ||
+          status.contains('reached destination') ||
+          status.contains('at destination station')) {
+        arrivedAtStation++;
+      } else if (status.contains('in transit') || status.contains('dispatched') ||
+          status.contains('forwarded') || status.contains('departed') ||
+          status.contains('on the way')) {
+        inTransit++;
+      } else if (status.contains('shipment picked') || status.contains('picked up') ||
+          status.contains('pickup request') || status.contains('booked') ||
+          status == 'pickup') {
+        shipmentPicked++;
+      } else if (status == 'pending' || status.contains('booking') ||
+          status.contains('awaiting pickup') || status.contains('manifest')) {
+        pending++;
+      } else {
+        otherStatus++;
       }
     }
 
@@ -1751,10 +1776,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF1769E0)),
         _statCard('Pending Sync', pendingSync.toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
-        _statCard('In Transit', inTransit.toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
+        _statCard('Pending / Booked', pending.toString(), Icons.hourglass_empty_rounded, const Color(0xFF64748B)),
+        _statCard('Shipment Picked', shipmentPicked.toString(), Icons.inventory_rounded, const Color(0xFF0D9488)),
+        _statCard('In Transit / Dispatched', inTransit.toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
+        _statCard('Arrived at Station', arrivedAtStation.toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
         _statCard('Out for Delivery', outForDelivery.toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
         _statCard('Delivered', delivered.toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
         _statCard('Returned', returned.toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
+        _statCard('Other Status', otherStatus.toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
       ],
     );
   }
