@@ -239,10 +239,28 @@ class LcsApiService {
     final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
     final details = _maps(detail);
     DateTime? latestEventDate;
+    DateTime? latestTerminalEventDate;
+    String? latestTerminalStatus;
+    String? undatedTerminalStatus;
+
+    bool isTerminalStatus(String value) {
+      final normalized = value.toLowerCase().trim();
+      final delivered = normalized.contains('delivered') &&
+          !normalized.contains('undelivered');
+      final returned = normalized.contains('return to shipper') ||
+          normalized.contains('returned to shipper') ||
+          normalized.contains('returning to shipper') ||
+          normalized.contains('returned') ||
+          normalized == 'rts' ||
+          normalized.contains('return shipment');
+      return delivered || returned;
+    }
+
     for (final item in details) {
       final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ??
               item['activity'] ?? item['Activity'] ?? item['tracking_status'] ??
-              item['Tracking Status'] ?? item['description'] ?? item['Description'] ?? '')
+              item['Tracking Status'] ?? item['status_description'] ??
+              item['event_status'] ?? item['description'] ?? item['Description'] ?? '')
           .toString().trim();
       final itemDate = _dateFromMap(item);
       if (itemDate != null && (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
@@ -251,14 +269,46 @@ class LcsApiService {
       } else if (itemDate == null && latestEventDate == null && itemStatus.isNotEmpty) {
         status = itemStatus;
       }
-      if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
+
+      // Terminal events must not be overwritten by a station-arrival event
+      // if the courier API returns its history in an unexpected order.
+      if (itemStatus.isNotEmpty && isTerminalStatus(itemStatus)) {
+        if (itemDate != null) {
+          if (latestTerminalEventDate == null || !itemDate.isBefore(latestTerminalEventDate)) {
+            latestTerminalEventDate = itemDate;
+            latestTerminalStatus = itemStatus;
+          }
+        } else if (undatedTerminalStatus == null) {
+          undatedTerminalStatus = itemStatus;
+        }
+      }
+
+      final normalizedItemStatus = itemStatus.toLowerCase();
+      if (normalizedItemStatus.contains('delivered') &&
+          !normalizedItemStatus.contains('undelivered') &&
+          itemDate != null) {
         if (deliveryDate == null || itemDate.isAfter(deliveryDate)) {
           deliveryDate = itemDate;
         }
       }
     }
-    if (latestEventDate != null) statusDate = latestEventDate;
-    if (status.toLowerCase().contains('deliver') && deliveryDate == null) {
+    if (latestTerminalStatus != null) {
+      status = latestTerminalStatus!;
+      statusDate = latestTerminalEventDate ?? statusDate;
+    } else if (undatedTerminalStatus != null) {
+      status = undatedTerminalStatus!;
+    } else if (latestEventDate != null) {
+      statusDate = latestEventDate;
+    }
+
+    final normalizedFinalStatus = status.toLowerCase().trim();
+    final finalIsDelivered = normalizedFinalStatus.contains('delivered') &&
+        !normalizedFinalStatus.contains('undelivered');
+    final finalIsReturned = normalizedFinalStatus.contains('return') ||
+        normalizedFinalStatus == 'rts';
+    if (finalIsReturned) {
+      deliveryDate = null;
+    } else if (finalIsDelivered && deliveryDate == null) {
       deliveryDate = statusDate;
     }
 
