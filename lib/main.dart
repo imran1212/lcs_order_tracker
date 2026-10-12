@@ -293,7 +293,7 @@ class LcsApiService {
       }
     }
     if (latestTerminalStatus != null) {
-      status = latestTerminalStatus!;
+      status = latestTerminalStatus;
       statusDate = latestTerminalEventDate ?? statusDate;
     } else if (undatedTerminalStatus != null) {
       status = undatedTerminalStatus!;
