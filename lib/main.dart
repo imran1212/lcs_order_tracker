@@ -114,15 +114,15 @@ class LcsOrderTrackerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'LCS Tracker',
+      title: 'LCS Tracker by AQAS',
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: 'Roboto',
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1769E0),
+          seedColor: const Color(0xFF087A46),
           brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+        scaffoldBackgroundColor: const Color(0xFFF5F8F3),
       ),
       home: const AuthGate(),
     );
@@ -682,29 +682,29 @@ final loginEmail = email.contains('@')
                   width: 82,
                   height: 82,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1769E0),
+                    color: const Color(0xFF087A46),
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF1769E0).withOpacity(.25),
+                        color: const Color(0xFF087A46).withOpacity(.25),
                         blurRadius: 20,
                         offset: const Offset(0, 10),
                       ),
                     ],
                   ),
-                  child: const Icon(
-                    Icons.local_shipping_rounded,
-                    color: Colors.white,
-                    size: 46,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.asset('assets/aqas_logo.jpg', width: 92, height: 92, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 46)),
                   ),
                 ),
 
                 const SizedBox(height: 24),
 
                 const Text(
-                  'LCS Tracker',
+                  'LCS Tracker by AQAS',
                   style: TextStyle(
-                    fontSize: 30,
+                    fontSize: 27,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -712,12 +712,11 @@ final loginEmail = email.contains('@')
                 const SizedBox(height: 6),
 
                 Text(
-                  'Manage your courier orders',
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: Colors.grey.shade600,
-                  ),
+                  'Order Management by AQAS',
+                  style: TextStyle(fontSize: 15, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
                 ),
+                const SizedBox(height: 8),
+                const Text('Limited Licensed for AQAQ', style: TextStyle(fontSize: 11, color: Color(0xFF087A46), fontWeight: FontWeight.w700, letterSpacing: .4)),
 
                 const SizedBox(height: 38),
 
@@ -775,7 +774,7 @@ final loginEmail = email.contains('@')
                   child: ElevatedButton(
                     onPressed: loading ? null : login,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1769E0),
+                      backgroundColor: const Color(0xFF087A46),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -1243,7 +1242,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: const Color(0xFF1769E0),
+                color: const Color(0xFF087A46),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: const Icon(
@@ -1263,9 +1262,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
                 Text(
-                  'Order Management',
+                  'Order Management by AQAS',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     color: Colors.grey,
                   ),
                 ),
@@ -1381,7 +1380,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     label: Text(_bulkSyncingOrders
                         ? 'Syncing $_bulkSyncCompleted/$_bulkSyncTotal orders...'
                         : 'Sync All Orders (Except Delivered)'),
-                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1769E0), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
                   ),
                 ),
 
@@ -1609,7 +1608,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           );
         },
-        backgroundColor: const Color(0xFF1769E0),
+        backgroundColor: const Color(0xFF087A46),
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add_rounded),
         label: const Text(
@@ -1688,7 +1687,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1769E0).withOpacity(.20),
+            color: const Color(0xFF087A46).withOpacity(.20),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -1922,10 +1921,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       crossAxisSpacing: 12,
       childAspectRatio: 1.72,
       children: [
-        _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF1769E0)),
+        _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF087A46)),
         _statCard('Pending Sync', count(LcsDashboardStatusCategory.pendingSync).toString(), Icons.sync_rounded, const Color(0xFF5B6B7A)),
         _statCard('Pending / Booked', count(LcsDashboardStatusCategory.pending).toString(), Icons.hourglass_empty_rounded, const Color(0xFF64748B)),
-        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF0D9488)),
+        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF087A46)),
         _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF7B61FF)),
         _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2563EB)),
         _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
@@ -2011,7 +2010,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1769E0).withOpacity(.08),
+                    color: const Color(0xFF087A46).withOpacity(.08),
                     borderRadius: BorderRadius.circular(13),
                   ),
                   child: const Icon(Icons.inventory_2_rounded, color: Color(0xFF1769E0)),
@@ -2487,7 +2486,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     vertical: 8,
                   ),
                   leading: CircleAvatar(
-                    backgroundColor: const Color(0xFF1769E0).withOpacity(.10),
+                    backgroundColor: const Color(0xFF087A46).withOpacity(.10),
                     child: const Icon(
                       Icons.person_rounded,
                       color: Color(0xFF1769E0),
@@ -2598,7 +2597,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             children: [
               Icon(
                 returnCase ? Icons.assignment_late_outlined : Icons.shield_outlined,
-                color: returnCase ? const Color(0xFFB42318) : const Color(0xFF1769E0),
+                color: returnCase ? const Color(0xFFB42318) : const Color(0xFF087A46),
               ),
               const SizedBox(width: 8),
               const Expanded(
@@ -3072,7 +3071,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
           Container(
             padding: const EdgeInsets.all(12),
             margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(color: const Color(0xFF1769E0).withOpacity(.06), borderRadius: BorderRadius.circular(14)),
+            decoration: BoxDecoration(color: const Color(0xFF087A46).withOpacity(.06), borderRadius: BorderRadius.circular(14)),
             child: Text('LCS Status manually edit nahi hoga. API status ko control karegi.', style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w700)),
           ),
           SizedBox(width: double.infinity, height: 52, child: FilledButton.icon(onPressed: saving ? null : _save, icon: const Icon(Icons.save_rounded), label: Text(saving ? 'Saving...' : 'Save Changes'))),
@@ -3091,7 +3090,7 @@ Color statusColor(String status) {
     case 'Returned':
       return const Color(0xFFE5484D);
     default:
-      return const Color(0xFF1769E0);
+      return const Color(0xFF087A46);
   }
 }
 
@@ -3802,10 +3801,10 @@ Future<void> _loadWorkerName() async {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
+                color: const Color(0xFF087A46).withOpacity(.06),
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
+                  color: const Color(0xFF087A46).withOpacity(.12),
                 ),
               ),
               child: Column(
@@ -3945,10 +3944,10 @@ Future<void> _loadWorkerName() async {
               padding: const EdgeInsets.all(14),
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
+                color: const Color(0xFF087A46).withOpacity(.06),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
+                  color: const Color(0xFF087A46).withOpacity(.12),
                 ),
               ),
               child: const Row(
@@ -3977,7 +3976,7 @@ Future<void> _loadWorkerName() async {
                   ),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1769E0),
+                  backgroundColor: const Color(0xFF087A46),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(15),
