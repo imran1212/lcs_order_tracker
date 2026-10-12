@@ -40,12 +40,12 @@ jobs:
         run: flutter test --no-pub
 
       - name: Build release APK for device testing
-        run: flutter build apk --release --no-pub
+        run: flutter build apk --release --target-platform android-arm64 --no-pub
 
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-near-final-test-apk
+          name: lcs-tracker-arm64-near-final-test-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
