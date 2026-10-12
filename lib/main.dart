@@ -181,7 +181,7 @@ class LcsOrderTrackerApp extends StatelessWidget {
       },
     );
   }
-}}
+}
 
 // ============================================================
 // LCS API
