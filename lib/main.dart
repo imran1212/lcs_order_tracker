@@ -972,6 +972,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
   bool _showAllStationDelayedOrders = false;
+  int _bottomNavIndex = 0;
+  final ScrollController _dashboardScrollController = ScrollController();
+  final GlobalKey _ordersSectionKey = GlobalKey();
+  final GlobalKey _reportsSectionKey = GlobalKey();
   final TextEditingController _searchController = TextEditingController();
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
 
@@ -1027,6 +1031,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _statusNotificationSubscription?.cancel();
+    _dashboardScrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -1495,7 +1500,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               );
             },
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+              controller: _dashboardScrollController,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
               children: [
                 _welcomeCard(),
                 const SizedBox(height: 16),
@@ -1520,6 +1526,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 if (isAdmin) ...[
                   const SizedBox(height: 14),
+                  Container(key: _reportsSectionKey),
                   _workerPerformanceReport(
                     docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
                   ),
@@ -1533,6 +1540,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 22),
 
                 Row(
+                  key: _ordersSectionKey,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
@@ -1731,23 +1739,159 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.transparent,
-            builder: (_) => AddOrderSheet(
-              workerUid: workerUid,
-            ),
-          );
-        },
-        backgroundColor: const Color(0xFF087A46),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'aqas_add_order_nav',
+        onPressed: _openAddOrder,
+        backgroundColor: aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)],
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text(
-          'Add Order',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        child: const Icon(Icons.add_rounded, size: 32),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: BottomAppBar(
+          shape: const CircularNotchedRectangle(),
+          notchMargin: 7,
+          color: Colors.white,
+          child: SizedBox(
+            height: 62,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _bottomNavItem(0, Icons.home_rounded, 'Dashboard'),
+                _bottomNavItem(1, Icons.receipt_long_rounded, 'Orders'),
+                const SizedBox(width: 52),
+                _bottomNavItem(3, Icons.bar_chart_rounded, 'Reports'),
+                _bottomNavItem(4, Icons.palette_outlined, 'Settings'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAddOrder() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => AddOrderSheet(workerUid: workerUid),
+    );
+  }
+
+  Widget _bottomNavItem(int index, IconData icon, String label) {
+    final selected = _bottomNavIndex == index;
+    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1)];
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          setState(() => _bottomNavIndex = index);
+          if (index == 0) {
+            _dashboardScrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
+          } else if (index == 1) {
+            final ctx = _ordersSectionKey.currentContext;
+            if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
+          } else if (index == 3) {
+            final ctx = _reportsSectionKey.currentContext;
+            if (ctx != null) {
+              Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reports summary dashboard mein neeche hai.')));
+            }
+          } else if (index == 4) {
+            _showColorPalette();
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 2),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 23, color: selected ? accent : const Color(0xFF667085)),
+              const SizedBox(height: 3),
+              Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10, fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  color: selected ? accent : const Color(0xFF667085))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showColorPalette() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF7FAF7),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('App Color Palette', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 4),
+                const Text('Dashboard aur app accent color choose karein.'),
+                const SizedBox(height: 18),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: aqasPaletteNames.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.25,
+                  ),
+                  itemBuilder: (context, i) {
+                    final selected = appPaletteIndex.value == i;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () async {
+                        appPaletteIndex.value = i;
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setInt('aqas_palette_index', i);
+                        setSheetState(() {});
+                        if (mounted) setState(() {});
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: selected ? aqasPaletteColors[i] : const Color(0xFFE4E7EC), width: selected ? 2.5 : 1),
+                        ),
+                        padding: const EdgeInsets.all(9),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(height: 30, width: double.infinity,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                gradient: LinearGradient(colors: [aqasPaletteColors[i], Color.lerp(aqasPaletteColors[i], Colors.white, .35)!]),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(aqasPaletteNames[i], textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                            if (selected) Icon(Icons.check_circle, color: aqasPaletteColors[i], size: 16),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 14),
+                SizedBox(width: double.infinity, child: FilledButton.icon(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Apply Selected Theme'),
+                  style: FilledButton.styleFrom(backgroundColor: aqasPaletteColors[appPaletteIndex.value], foregroundColor: Colors.white),
+                )),
+              ],
+            ),
+          ),
         ),
       ),
     );
