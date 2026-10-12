@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V1
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
@@ -91,8 +92,14 @@ void lcsBackgroundCallbackDispatcher() {
   });
 }
 
+const List<Color> aqasPaletteColors = [Color(0xFF087A46), Color(0xFF0878D1), Color(0xFF7C3AED), Color(0xFFF06423), Color(0xFFE11D48), Color(0xFFF0A500), Color(0xFF0D9488), Color(0xFF2746C7), Color(0xFF20252D)];
+const List<String> aqasPaletteNames = ['AQAS Green', 'Ocean Blue', 'Purple Pro', 'Sunset Orange', 'Rose Red', 'Amber Gold', 'Teal Mint', 'Indigo', 'Dark Mode'];
+final ValueNotifier<int> appPaletteIndex = ValueNotifier<int>(0);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  appPaletteIndex.value = prefs.getInt('aqas_palette_index') ?? 0;
   await Firebase.initializeApp();
   await Workmanager().initialize(lcsBackgroundCallbackDispatcher);
   if (Platform.isAndroid) {
@@ -156,22 +163,25 @@ class LcsOrderTrackerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'LCS Tracker by AQAS',
-      theme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'Roboto',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF087A46),
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF5F8F3),
-      ),
-      home: const AuthGate(),
+    return ValueListenableBuilder<int>(
+      valueListenable: appPaletteIndex,
+      builder: (context, paletteIndex, _) {
+        final accent = aqasPaletteColors[paletteIndex.clamp(0, aqasPaletteColors.length - 1)];
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'LCS Tracker by AQAS',
+          theme: ThemeData(
+            useMaterial3: true,
+            fontFamily: 'Roboto',
+            colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.light),
+            scaffoldBackgroundColor: const Color(0xFFF5F8F3),
+          ),
+          home: const AuthGate(),
+        );
+      },
     );
   }
-}
+}}
 
 // ============================================================
 // LCS API
