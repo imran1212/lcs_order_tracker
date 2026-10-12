@@ -246,16 +246,37 @@ class LcsApiService {
     return null;
   }
 
+  static String _normalizedKey(dynamic key) =>
+      key.toString().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  static dynamic _mapValue(Map map, List<String> aliases) {
+    final wanted = aliases.map(_normalizedKey).toSet();
+    for (final entry in map.entries) {
+      if (wanted.contains(_normalizedKey(entry.key)) && entry.value != null) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
   static DateTime? _dateFromMap(Map map) {
     const preferredKeys = [
       'status_date', 'statusDate', 'activity_date', 'activityDate',
       'Activity Date', 'Activity_Date', 'activity date', 'activityDateTime',
       'tracking_date', 'trackingDate', 'date_time', 'datetime', 'date',
-      'time', 'created_at', 'updated_at',
+      'time', 'created_at', 'updated_at', 'event_date', 'eventDate',
     ];
     for (final key in preferredKeys) {
-      final parsed = tryParseDate(map[key]);
+      final parsed = tryParseDate(_mapValue(map, [key]));
       if (parsed != null) return parsed;
+    }
+    // LCS API versions sometimes vary only in key casing or separators.
+    for (final entry in map.entries) {
+      final key = _normalizedKey(entry.key);
+      if (key.contains('date') || key.contains('time')) {
+        final parsed = tryParseDate(entry.value);
+        if (parsed != null) return parsed;
+      }
     }
     return null;
   }
@@ -266,6 +287,41 @@ class LcsApiService {
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
+  }
+
+  // Search nested LCS response structures as well as the known
+  // Tracking Detail field; API versions may change casing/nesting.
+  static List<Map<String, dynamic>> _trackingEventMaps(Map<String, dynamic> packet) {
+    final events = <Map<String, dynamic>>[];
+    void visit(dynamic value, {bool isRoot = false}) {
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        if (!isRoot) {
+          final hasEventText = map.entries.any((entry) {
+            final key = _normalizedKey(entry.key);
+            return (key.contains('status') ||
+                    key.contains('activity') ||
+                    key.contains('description') ||
+                    key.contains('event') ||
+                    key.contains('remark')) &&
+                entry.value is String &&
+                (entry.value as String).trim().isNotEmpty;
+          });
+          if (hasEventText) events.add(map);
+        }
+        for (final entry in value.entries) {
+          if (entry.value is Map || entry.value is List) {
+            visit(entry.value);
+          }
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          if (item is Map || item is List) visit(item);
+        }
+      }
+    }
+    visit(packet, isRoot: true);
+    return events;
   }
 
   static Future<LcsSyncResult> syncCn(String cn) async {
@@ -280,8 +336,12 @@ class LcsApiService {
     DateTime? statusDate = _dateFromMap(packet);
     DateTime? deliveryDate;
 
-    final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
-    final details = _maps(detail);
+    final detail = _mapValue(packet, [
+      'Tracking Detail', 'tracking_detail', 'trackingDetail',
+      'tracking_history', 'trackingHistory', 'tracking_details',
+    ]);
+    final details = _trackingEventMaps(packet);
+    if (details.isEmpty) details.addAll(_maps(detail));
     DateTime? latestEventDate;
     DateTime? latestTerminalEventDate;
     String? latestTerminalStatus;
@@ -301,10 +361,11 @@ class LcsApiService {
     }
 
     for (final item in details) {
-      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ??
-              item['activity'] ?? item['Activity'] ?? item['tracking_status'] ??
-              item['Tracking Status'] ?? item['status_description'] ??
-              item['event_status'] ?? item['description'] ?? item['Description'] ?? '')
+      final itemStatus = (_mapValue(item, [
+        'status', 'Staus', 'activity', 'tracking_status', 'Tracking Status',
+        'status_description', 'event_status', 'description', 'remarks',
+        'event_description', 'tracking_status_description',
+      ]) ?? '')
           .toString().trim();
       final itemDate = _dateFromMap(item);
       if (itemDate != null && (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
