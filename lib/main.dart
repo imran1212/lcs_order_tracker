@@ -3048,7 +3048,15 @@ class OrderData {
       customer: (data['customer'] ?? '').toString(),
       customerPhone: (data['customerPhone'] ?? '').toString(),
       cn: (data['cn'] ?? '').toString(),
-      product: (data['product'] ?? 'Not specified').toString().replaceAll(RegExp(r'^[\s\{\[\(]+'), '').replaceAll(RegExp(r'[\s\}\]\)]+
+      product: (data['product'] ?? 'Not specified')
+          .toString()
+          .replaceAll('{', '')
+          .replaceAll('}', '')
+          .replaceAll('[', '')
+          .replaceAll(']', '')
+          .replaceAll('(', '')
+          .replaceAll(')', '')
+          .trim(),
       amount: (data['amount'] as num?)?.toDouble() ?? 0,
       status: (data['status'] ?? 'Pending API Sync').toString(),
       destination: (data['destination'] ?? '').toString(),
