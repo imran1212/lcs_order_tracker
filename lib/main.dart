@@ -227,36 +227,18 @@ class LcsApiService {
     }
 
     final packet = packets.first;
-    // Keep the booked status as fallback, but prefer the newest dated tracking
-    // event because carrier portals often show the latest movement as current status.
-    var status = _cleanStatus(packet['booked_packet_status'] ?? packet['status']);
+    final status = _cleanStatus(packet['booked_packet_status'] ?? packet['status']);
     DateTime? statusDate = _dateFromMap(packet);
     DateTime? deliveryDate;
 
     final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
     final details = _maps(detail);
-    Map<String, dynamic>? latestDatedItem;
-    DateTime? latestEventDate;
-
     for (final item in details) {
-      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ??
-              item['activity'] ?? item['Activity'] ?? item['tracking_status'] ??
-              item['Tracking Status'] ?? item['description'] ?? item['Description'] ?? '')
-          .toString()
-          .trim();
+      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ?? item['activity'] ?? item['Activity'] ?? '').toString();
       final itemDate = _dateFromMap(item);
-
-      if (itemDate != null &&
-          (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
-        latestEventDate = itemDate;
-        latestDatedItem = item;
-        if (itemStatus.isNotEmpty) status = itemStatus;
-      } else if (itemDate == null && latestDatedItem == null && itemStatus.isNotEmpty) {
-        // If the API provides no event dates, use the last history entry as a
-        // fallback rather than discarding tracking history completely.
-        status = itemStatus;
+      if (itemDate != null && (statusDate == null || itemDate.isAfter(statusDate!))) {
+        statusDate = itemDate;
       }
-
       if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
         if (deliveryDate == null || itemDate.isAfter(deliveryDate!)) {
           deliveryDate = itemDate;
@@ -264,7 +246,6 @@ class LcsApiService {
       }
     }
 
-    if (latestEventDate != null) statusDate = latestEventDate;
     if (status.toLowerCase().contains('deliver') && deliveryDate == null) {
       deliveryDate = statusDate;
     }
@@ -739,8 +720,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_bulkSyncingOrders) return;
     final targets = allOrders.where((order) {
       final status = order.status.toLowerCase().trim();
-      final isDelivered = status.contains('delivered') && !status.contains('undelivered');
-      return !isDelivered && order.cn.trim().isNotEmpty;
+      final delivered = status.contains('delivered') && !status.contains('undelivered');
+      return !delivered && order.cn.trim().isNotEmpty;
     }).toList();
 
     if (targets.isEmpty) {
@@ -754,19 +735,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Sync all active orders?'),
-        content: Text(
-          '${targets.length} orders LCS se sync honge. Delivered orders skip honge. '
-          'Internet aur LCS API response ke mutabiq waqt lag sakta hai.',
-        ),
+        content: Text('${targets.length} orders sync honge. Delivered orders skip honge.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Start Sync'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Sync')),
         ],
       ),
     );
@@ -785,8 +757,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (!mounted) break;
         try {
           final result = await LcsApiService.syncCn(order.cn.trim());
-          final orderRef = FirebaseFirestore.instance.collection('orders').doc(order.id);
-          await orderRef.update({
+          final ref = FirebaseFirestore.instance.collection('orders').doc(order.id);
+          await ref.update({
             'status': result.status,
             'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
             'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
@@ -794,11 +766,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'lcsRawStatus': result.status,
             'updatedAt': FieldValue.serverTimestamp(),
           });
-
           if (order.status.trim() != result.status.trim()) {
             final statusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
             final timeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-            await orderRef.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
+            await ref.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
               'cn': order.cn,
               'previousStatus': order.status.trim(),
               'status': result.status.trim(),
@@ -818,10 +789,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('LCS sync complete: $succeeded updated, $failed failed. Delivered orders skipped.'),
-            duration: const Duration(seconds: 6),
-          ),
+          SnackBar(content: Text('LCS sync complete: $succeeded updated, $failed failed. Delivered orders skipped.')),
         );
       }
     }
@@ -1215,14 +1183,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
                             ),
                     icon: _bulkSyncingOrders
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.sync_rounded),
                     label: Text(_bulkSyncingOrders
-                        ? 'Syncing $_bulkSyncCompleted/\$_bulkSyncTotal orders...'
+                        ? 'Syncing $_bulkSyncCompleted/$_bulkSyncTotal orders...'
                         : 'Sync All Orders (Except Delivered)'),
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF1769E0),
@@ -1640,25 +1604,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         dateFilterType != 'Booking Date';
   }
 
-  // LCS_STATUS_BUCKETING_V2: group real carrier status variants into dashboard buckets.
-  String _statusBucket(String rawStatus) {
-    final s = rawStatus.toLowerCase().trim().replaceAll(RegExp(r'[_-]+'), ' ');
-    if (s.isEmpty) return 'other';
-    if (s.contains('pending api sync') || s.contains('pending sync')) return 'pending';
-    if (s.contains('delivered') && !s.contains('undelivered')) return 'delivered';
-    if (s.contains('return') || s.contains('returned') || s == 'rts') return 'returned';
-    if (s.contains('out for delivery') || s.contains('out for deliver')) return 'out';
-    if (s.contains('in transit') || s.contains('arrived at station') ||
-        s.contains('departed') || s.contains('dispatched') ||
-        s.contains('picked up') || s.contains('picked-up') ||
-        s.contains('received at') || s.contains('forwarded') ||
-        s.contains('shipment booked') || s.contains('booked') ||
-        s == 'ar' || s.startsWith('ar ')) {
-      return 'transit';
-    }
-    return 'other';
-  }
-
   // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
   Widget _workerPerformanceReport(List<OrderData> allOrders) {
     final grouped = <String, List<OrderData>>{};
@@ -1675,8 +1620,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ..sort((a, b) => b.value.length.compareTo(a.value.length));
     final shown = entries.take(5).toList();
 
-    int countStatus(List<OrderData> items, String bucket) =>
-        items.where((o) => _statusBucket(o.status) == bucket).length;
+    int countStatus(List<OrderData> items, bool Function(String) test) =>
+        items.where((o) => test(o.status.toLowerCase().trim())).length;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1706,14 +1651,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 10),
           ...shown.map((entry) {
             final items = entry.value;
-            final delivered = countStatus(items, 'delivered');
-            final returned = countStatus(items, 'returned');
-            final failed = items.where((o) {
-              final s = o.status.toLowerCase().trim();
-              return s.contains('attempt') || s.contains('undeliver') ||
-                  s.contains('failed') || s == 'pn1' || s == 'pn2';
-            }).length;
-            final pending = countStatus(items, 'pending');
+            final delivered = countStatus(items, (s) => s.contains('deliver') && !s.contains('undeliver'));
+            final returned = countStatus(items, (s) => s.contains('return'));
+            final failed = countStatus(items, (s) =>
+                s.contains('attempt') || s.contains('undeliver') ||
+                s.contains('failed') || s == 'pn1' || s == 'pn2');
+            final pending = countStatus(items, (s) => s == 'pending api sync');
             final deliveryRate = items.isEmpty ? 0 : (delivered * 100 / items.length).round();
             return Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -1771,27 +1714,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     int outForDelivery = 0;
     int returned = 0;
     int pendingSync = 0;
-    int otherStatus = 0;
 
     for (final order in orders) {
-      switch (_statusBucket(order.status)) {
-        case 'delivered':
-          delivered++;
-          break;
-        case 'transit':
-          inTransit++;
-          break;
-        case 'out':
-          outForDelivery++;
-          break;
-        case 'returned':
-          returned++;
-          break;
-        case 'pending':
-          pendingSync++;
-          break;
-        default:
-          otherStatus++;
+      final status = order.status.trim();
+      if (status == 'Delivered') {
+        delivered++;
+      } else if (status == 'In Transit') {
+        inTransit++;
+      } else if (status == 'Out for Delivery') {
+        outForDelivery++;
+      } else if (status == 'Returned') {
+        returned++;
+      } else if (status == 'Pending API Sync') {
+        pendingSync++;
       }
     }
 
@@ -1809,7 +1744,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _statCard('Out for Delivery', outForDelivery.toString(), Icons.delivery_dining_rounded, const Color(0xFFFF9800)),
         _statCard('Delivered', delivered.toString(), Icons.check_circle_rounded, const Color(0xFF16A36A)),
         _statCard('Returned', returned.toString(), Icons.assignment_return_rounded, const Color(0xFFE5484D)),
-        _statCard('Other Status', otherStatus.toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
       ],
     );
   }
@@ -3295,1102 +3229,18 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
       customerController.text = _cleanOcrValue(customer);
     }
 
-    // Read labelled fields line-by-line so OCR ordering cannot assign COD
-    // amount (for example "PKR 1,099.00") to Destination.
-    final receiptLines = text.split('\n').map((line) => line.trim()).toList();
-    String labelledValue(List<String> labels) {
-      for (var i = 0; i < receiptLines.length; i++) {
-        final line = receiptLines[i];
-        for (final label in labels) {
-          final match = RegExp('^' + label + r'\s*[:\-]?\s*(.*)
-
-    final product = _firstMatch(
-      r'(?:PRODUCT|ITEM|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
+    final destination = _firstMatch(
+      r'(?:DESTINATION(?:\s*CITY)?|DESTINATION\s*CITY\s*NAME)\s*[:\-]?\s*([^\n]+)',
       text,
     );
-    if (product.isNotEmpty) {
-      productController.text = _cleanProductValue(product);
-    }
-
-    // Kuch LCS receipts mein product dedicated label ke bajaye
-    // Special Instruction ke start mein hota hai.
-    if (productController.text.trim().isEmpty) {
-      final specialIndex = upper.indexOf('SPECIAL INSTRUCTION');
-      if (specialIndex >= 0) {
-        final tail = text.substring(specialIndex);
-        final lines = tail
-            .split('\n')
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList();
-        if (lines.length > 1) {
-          var candidate = _cleanOcrValue(
-            lines[1].replaceFirst(RegExp(r'^[:\-]+'), '').trim(),
-          );
-          candidate = candidate.split(RegExp(
-            r'\s*(?:\)|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH)',
-            caseSensitive: false,
-          )).first;
-          candidate = _cleanProductValue(candidate);
-          if (candidate.isNotEmpty) {
-            productController.text = candidate;
-          }
-        }
-      }
-    }
-  }
-
-  String _cleanProductValue(String value) {
-    return _cleanOcrValue(value)
-        .replaceAll(RegExp(r'[{}\)\(]+'), ' ')
-        .replaceAll(RegExp(
-          r'\s*(?:KINDLY|CAREFULLY|SO\s+PARCEL|PARCEL\s+WITH|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
-          caseSensitive: false,
-        ), '')
-        .replaceAll(RegExp(r'\s{2,}'), ' ')
-        .trim();
-  }
-
-  DateTime? _parseReceiptDate(String value) {
-    if (value.trim().isEmpty) return null;
-    final v = value.trim().replaceAll('/', '-');
-    final parts = v.split('-');
-    try {
-      if (parts.length != 3) return null;
-      if (parts[0].length == 4) {
-        return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-      }
-      return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _formatDateOnly(DateTime value) =>
-      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
-
-  String _cleanOcrValue(String value) {
-    return value
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(RegExp(r'^[\s:\-]+|[\s]+$'), '')
-        .trim();
-  }
-
-@override
-void initState() {
-  super.initState();
-  _loadWorkerName();
-}
-
-Future<void> _loadWorkerName() async {
-  try {
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.workerUid)
-        .get();
-
-    if (!mounted || !doc.exists) return;
-
-    final data = doc.data() ?? {};
-
-    final name = (data['name'] ?? data['username'] ?? '').toString();
-
-    if (name.isNotEmpty) {
-      workerController.text = name;
-    }
-  } catch (_) {
-    // Worker name load fail ho to order save phir bhi continue rahe.
-  }
-}
-
-  @override
-  void dispose() {
-    customerController.dispose();
-    customerPhoneController.dispose();
-    cnController.dispose();
-    productController.dispose();
-    amountController.dispose();
-    destinationController.dispose();
-    workerController.dispose();
-    bookingDateController.dispose();
-    _textRecognizer.close();
-    _barcodeScanner.close();
-    super.dispose();
-  }
-
-  Future<void> _pickBookingDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-      initialDate: bookingDate ?? DateTime.now(),
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      bookingDate = picked;
-      bookingDateController.text = _formatDateOnly(picked);
-    });
-  }
-
-  Future<void> _saveBulkReceiptOrders() async {
-    final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
-    if (valid.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kisi receipt se CN number detect nahi hua. Fields manually correct karein.')),
-      );
-      return;
-    }
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      final ordersCollection = FirebaseFirestore.instance.collection('orders');
-      for (final draft in valid) {
-        final ref = ordersCollection.doc();
-        final date = draft['bookingDate'] as DateTime?;
-        final cn = (draft['cn'] ?? '').toString().trim();
-        batch.set(ref, {
-          'customer': (draft['customer'] ?? '').toString().trim(),
-          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
-          'cn': cn,
-          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
-          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
-          'status': 'Pending API Sync',
-          'destination': (draft['destination'] ?? '').toString().trim(),
-          'workerName': workerController.text.trim(),
-          'workerUid': widget.workerUid,
-          'bookingDate': date == null ? null : Timestamp.fromDate(date),
-          'statusDate': null,
-          'deliveryDate': null,
-          'receiptUrls': <String>[],
-          'receiptCount': 1,
-          'receiptUploadStatus': 'temporary_only',
-          'receiptImageName': (draft['imagePath'] ?? '').toString(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
-          'cn': cn,
-          'previousStatus': '',
-          'status': 'Pending API Sync',
-          'source': 'bulk_receipt_import',
-          'activityDate': date == null ? Timestamp.now() : Timestamp.fromDate(date),
-          'recordedAt': FieldValue.serverTimestamp(),
-        });
-      }
-      await batch.commit();
-      if (!mounted) return;
-      final skipped = _bulkReceiptDrafts.length - valid.length;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
-      );
-    }
-  }
-
-  Future<void> save() async {
-    if (_bulkReceiptDrafts.length > 1) {
-      await _saveBulkReceiptOrders();
-      return;
-    }
-    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Customer name and CN number are required.')),
-      );
-      return;
-    }
-
-    final amount = double.tryParse(amountController.text.trim()) ?? 0;
-    final finalBookingDate = bookingDate ?? DateTime.now();
-
-    try {
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
-
-      await orderRef.set({
-        'customer': customerController.text.trim(),
-        'customerPhone': customerPhoneController.text.trim(),
-        'cn': cnController.text.trim(),
-        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
-        'amount': amount,
-        'status': 'Pending API Sync',
-        'destination': destinationController.text.trim(),
-        'workerName': workerController.text.trim(),
-        'workerUid': widget.workerUid,
-        'bookingDate': Timestamp.fromDate(finalBookingDate),
-        'statusDate': null,
-        'deliveryDate': null,
-        'receiptUrls': <String>[],
-        'receiptCount': _receiptImages.length,
-        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // LCS_STATUS_HISTORY_V1: save the initial order status.
-      await orderRef.collection('lcsStatusHistory')
-          .doc('order_created_pending')
-          .set({
-        'cn': cnController.text.trim(),
-        'previousStatus': '',
-        'status': 'Pending API Sync',
-        'source': 'order_created',
-        'activityDate': Timestamp.fromDate(finalBookingDate),
-        'recordedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      // Spark development mode: receipt images are used for OCR/review only.
-      // Permanent Storage upload is intentionally disabled for now.
-      await orderRef.update({
-        'receiptUrls': <String>[],
-        'receiptCount': _receiptImages.length,
-        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Automatically fetch LCS status immediately after saving a new order.
-      // Keep the order saved even if the courier API is temporarily unavailable.
-      String? syncWarning;
-      try {
-        final result = await LcsApiService.syncCn(cnController.text.trim());
-        await orderRef.update({
-          'status': result.status,
-          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-          'lastApiSyncAt': FieldValue.serverTimestamp(),
-          'lcsRawStatus': result.status,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        if (result.status.trim() != 'Pending API Sync') {
-          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-          await orderRef.collection('lcsStatusHistory')
-              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
-              .set({
-            'cn': cnController.text.trim(),
-            'previousStatus': 'Pending API Sync',
-            'status': result.status.trim(),
-            'source': 'new_order_auto_sync',
-            'activityDate': result.statusDate == null
-                ? Timestamp.now()
-                : Timestamp.fromDate(result.statusDate!),
-            'recordedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
-      } catch (e) {
-        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
-      }
-
-      if (!mounted) return;
-      Navigator.pop(context);
-      if (syncWarning != null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order save nahi hua: $e')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
-
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(28),
-        ),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 45,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Add New Order',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 18),
-
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(
-                        Icons.document_scanner_rounded,
-                        color: Color(0xFF1769E0),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Scan LCS Receipt',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _ocrLoading ? null : _pickReceiptImages,
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: const Text('Gallery'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          label: const Text('Camera'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_ocrLoading) ...[
-                    const SizedBox(height: 12),
-                    const LinearProgressIndicator(),
-                  ],
-                  if (_ocrMessage.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _ocrMessage,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  if (_receiptImages.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1769E0),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            _field(
-              controller: customerController,
-              label: 'Customer Name',
-              icon: Icons.person_outline_rounded,
-            ),
-
-            _field(
-              controller: customerPhoneController,
-              label: 'Customer Contact Number',
-              icon: Icons.phone_outlined,
-              keyboardType: TextInputType.phone,
-            ),
-
-            _field(
-              controller: cnController,
-              label: 'LCS CN Number',
-              icon: Icons.qr_code_2_rounded,
-            ),
-
-            _field(
-              controller: productController,
-              label: 'Product',
-              icon: Icons.shopping_bag_outlined,
-            ),
-
-            _field(
-              controller: amountController,
-              label: 'COD Amount',
-              icon: Icons.payments_outlined,
-              keyboardType: TextInputType.number,
-            ),
-
-            _field(
-              controller: destinationController,
-              label: 'Destination',
-              icon: Icons.location_on_outlined,
-            ),
-
-            _field(
-              controller: bookingDateController,
-              label: 'Booking Date',
-              icon: Icons.calendar_today_outlined,
-              readOnly: true,
-              onTap: _pickBookingDate,
-            ),
-
-            _field(
-              controller: workerController,
-              label: 'Worker Name',
-              icon: Icons.person_outline_rounded,
-            ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
-                ),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton.icon(
-                onPressed: save,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text(
-                  'Add Order',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1769E0),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-}
-
-}
-,
-                  caseSensitive: false)
-              .firstMatch(line);
-          if (match != null) {
-            var value = _cleanOcrValue(match.group(1) ?? '');
-            if (value.isEmpty && i + 1 < receiptLines.length) {
-              final next = receiptLines[i + 1];
-              if (!RegExp(r'^(?:COD|AMOUNT|BOOKING?\s*DATE|DATE|CN|CONSIGNMENT|CUSTOMER|CONSIGNEE|PHONE|CONTACT|PRODUCT|ITEM|DESTINATION)\b',
-                      caseSensitive: false).hasMatch(next)) {
-                value = _cleanOcrValue(next);
-              }
-            }
-            return value;
-          }
-        }
-      }
-      return '';
-    }
-
-    var destination = labelledValue([
-      r'DESTINATION(?:\s+CITY)?',
-      r'DESTINATION\s+CITY\s+NAME',
-    ]);
-    if (destination.isNotEmpty &&
-        (RegExp(r'\b(?:PKR|RS\.?|COD)\b', caseSensitive: false).hasMatch(destination) ||
-         RegExp(r'^[\d, .]+
-
-    final product = _firstMatch(
-      r'(?:PRODUCT|ITEM|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
-      text,
-    );
-    if (product.isNotEmpty) {
-      productController.text = _cleanProductValue(product);
-    }
-
-    // Kuch LCS receipts mein product dedicated label ke bajaye
-    // Special Instruction ke start mein hota hai.
-    if (productController.text.trim().isEmpty) {
-      final specialIndex = upper.indexOf('SPECIAL INSTRUCTION');
-      if (specialIndex >= 0) {
-        final tail = text.substring(specialIndex);
-        final lines = tail
-            .split('\n')
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList();
-        if (lines.length > 1) {
-          var candidate = _cleanOcrValue(
-            lines[1].replaceFirst(RegExp(r'^[:\-]+'), '').trim(),
-          );
-          candidate = candidate.split(RegExp(
-            r'\s*(?:\)|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH)',
-            caseSensitive: false,
-          )).first;
-          candidate = _cleanProductValue(candidate);
-          if (candidate.isNotEmpty) {
-            productController.text = candidate;
-          }
-        }
-      }
-    }
-  }
-
-  String _cleanProductValue(String value) {
-    return _cleanOcrValue(value)
-        .replaceAll(RegExp(r'[\)\(]+'), ' ')
-        .replaceAll(RegExp(
-          r'\s*(?:KINDLY|CAREFULLY|SO\s+PARCEL|PARCEL\s+WITH|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
-          caseSensitive: false,
-        ), '')
-        .replaceAll(RegExp(r'\s{2,}'), ' ')
-        .trim();
-  }
-
-  DateTime? _parseReceiptDate(String value) {
-    if (value.trim().isEmpty) return null;
-    final v = value.trim().replaceAll('/', '-');
-    final parts = v.split('-');
-    try {
-      if (parts.length != 3) return null;
-      if (parts[0].length == 4) {
-        return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-      }
-      return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _formatDateOnly(DateTime value) =>
-      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
-
-  String _cleanOcrValue(String value) {
-    return value
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(RegExp(r'^[\s:\-]+|[\s]+$'), '')
-        .trim();
-  }
-
-@override
-void initState() {
-  super.initState();
-  _loadWorkerName();
-}
-
-Future<void> _loadWorkerName() async {
-  try {
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.workerUid)
-        .get();
-
-    if (!mounted || !doc.exists) return;
-
-    final data = doc.data() ?? {};
-
-    final name = (data['name'] ?? data['username'] ?? '').toString();
-
-    if (name.isNotEmpty) {
-      workerController.text = name;
-    }
-  } catch (_) {
-    // Worker name load fail ho to order save phir bhi continue rahe.
-  }
-}
-
-  @override
-  void dispose() {
-    customerController.dispose();
-    customerPhoneController.dispose();
-    cnController.dispose();
-    productController.dispose();
-    amountController.dispose();
-    destinationController.dispose();
-    workerController.dispose();
-    bookingDateController.dispose();
-    _textRecognizer.close();
-    _barcodeScanner.close();
-    super.dispose();
-  }
-
-  Future<void> _pickBookingDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-      initialDate: bookingDate ?? DateTime.now(),
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      bookingDate = picked;
-      bookingDateController.text = _formatDateOnly(picked);
-    });
-  }
-
-  Future<void> _saveBulkReceiptOrders() async {
-    final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
-    if (valid.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kisi receipt se CN number detect nahi hua. Fields manually correct karein.')),
-      );
-      return;
-    }
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      final ordersCollection = FirebaseFirestore.instance.collection('orders');
-      for (final draft in valid) {
-        final ref = ordersCollection.doc();
-        final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = (draft['cn'] ?? '').toString().trim();
-        batch.set(ref, {
-          'customer': (draft['customer'] ?? '').toString().trim(),
-          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
-          'cn': cn,
-          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
-          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
-          'status': 'Pending API Sync',
-          'destination': (draft['destination'] ?? '').toString().trim(),
-          'workerName': workerController.text.trim(),
-          'workerUid': widget.workerUid,
-          'bookingDate': Timestamp.fromDate(date),
-          'statusDate': null,
-          'deliveryDate': null,
-          'receiptUrls': <String>[],
-          'receiptCount': 1,
-          'receiptUploadStatus': 'temporary_only',
-          'receiptImageName': (draft['imagePath'] ?? '').toString(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
-          'cn': cn,
-          'previousStatus': '',
-          'status': 'Pending API Sync',
-          'source': 'bulk_receipt_import',
-          'activityDate': Timestamp.fromDate(date),
-          'recordedAt': FieldValue.serverTimestamp(),
-        });
-      }
-      await batch.commit();
-      if (!mounted) return;
-      final skipped = _bulkReceiptDrafts.length - valid.length;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
-      );
-    }
-  }
-
-  Future<void> save() async {
-    if (_bulkReceiptDrafts.length > 1) {
-      await _saveBulkReceiptOrders();
-      return;
-    }
-    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Customer name and CN number are required.')),
-      );
-      return;
-    }
-
-    final amount = double.tryParse(amountController.text.trim()) ?? 0;
-    final finalBookingDate = bookingDate ?? DateTime.now();
-
-    try {
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
-
-      await orderRef.set({
-        'customer': customerController.text.trim(),
-        'customerPhone': customerPhoneController.text.trim(),
-        'cn': cnController.text.trim(),
-        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
-        'amount': amount,
-        'status': 'Pending API Sync',
-        'destination': destinationController.text.trim(),
-        'workerName': workerController.text.trim(),
-        'workerUid': widget.workerUid,
-        'bookingDate': Timestamp.fromDate(finalBookingDate),
-        'statusDate': null,
-        'deliveryDate': null,
-        'receiptUrls': <String>[],
-        'receiptCount': _receiptImages.length,
-        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // LCS_STATUS_HISTORY_V1: save the initial order status.
-      await orderRef.collection('lcsStatusHistory')
-          .doc('order_created_pending')
-          .set({
-        'cn': cnController.text.trim(),
-        'previousStatus': '',
-        'status': 'Pending API Sync',
-        'source': 'order_created',
-        'activityDate': Timestamp.fromDate(finalBookingDate),
-        'recordedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      // Spark development mode: receipt images are used for OCR/review only.
-      // Permanent Storage upload is intentionally disabled for now.
-      await orderRef.update({
-        'receiptUrls': <String>[],
-        'receiptCount': _receiptImages.length,
-        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Automatically fetch LCS status immediately after saving a new order.
-      // Keep the order saved even if the courier API is temporarily unavailable.
-      String? syncWarning;
-      try {
-        final result = await LcsApiService.syncCn(cnController.text.trim());
-        await orderRef.update({
-          'status': result.status,
-          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-          'lastApiSyncAt': FieldValue.serverTimestamp(),
-          'lcsRawStatus': result.status,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        if (result.status.trim() != 'Pending API Sync') {
-          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-          await orderRef.collection('lcsStatusHistory')
-              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
-              .set({
-            'cn': cnController.text.trim(),
-            'previousStatus': 'Pending API Sync',
-            'status': result.status.trim(),
-            'source': 'new_order_auto_sync',
-            'activityDate': result.statusDate == null
-                ? Timestamp.now()
-                : Timestamp.fromDate(result.statusDate!),
-            'recordedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
-      } catch (e) {
-        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
-      }
-
-      if (!mounted) return;
-      Navigator.pop(context);
-      if (syncWarning != null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order save nahi hua: $e')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
-
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(28),
-        ),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 45,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Add New Order',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 18),
-
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(
-                        Icons.document_scanner_rounded,
-                        color: Color(0xFF1769E0),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Scan LCS Receipt',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _ocrLoading ? null : _pickReceiptImages,
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: const Text('Gallery'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          label: const Text('Camera'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_ocrLoading) ...[
-                    const SizedBox(height: 12),
-                    const LinearProgressIndicator(),
-                  ],
-                  if (_ocrMessage.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _ocrMessage,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  if (_receiptImages.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1769E0),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            _field(
-              controller: customerController,
-              label: 'Customer Name',
-              icon: Icons.person_outline_rounded,
-            ),
-
-            _field(
-              controller: customerPhoneController,
-              label: 'Customer Contact Number',
-              icon: Icons.phone_outlined,
-              keyboardType: TextInputType.phone,
-            ),
-
-            _field(
-              controller: cnController,
-              label: 'LCS CN Number',
-              icon: Icons.qr_code_2_rounded,
-            ),
-
-            _field(
-              controller: productController,
-              label: 'Product',
-              icon: Icons.shopping_bag_outlined,
-            ),
-
-            _field(
-              controller: amountController,
-              label: 'COD Amount',
-              icon: Icons.payments_outlined,
-              keyboardType: TextInputType.number,
-            ),
-
-            _field(
-              controller: destinationController,
-              label: 'Destination',
-              icon: Icons.location_on_outlined,
-            ),
-
-            _field(
-              controller: bookingDateController,
-              label: 'Booking Date',
-              icon: Icons.calendar_today_outlined,
-              readOnly: true,
-              onTap: _pickBookingDate,
-            ),
-
-            _field(
-              controller: workerController,
-              label: 'Worker Name',
-              icon: Icons.person_outline_rounded,
-            ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1769E0).withOpacity(.06),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFF1769E0).withOpacity(.12),
-                ),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton.icon(
-                onPressed: save,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text(
-                  'Add Order',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1769E0),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-}
-
-}
-).hasMatch(destination))) {
-      destination = '';
-    }
     if (destination.isNotEmpty) {
-      destinationController.text = destination;
+      destinationController.text = _cleanOcrValue(destination);
     }
 
-    var bookDate = labelledValue([r'BOOKING?\s*DATE', r'BOOK\s*DATE']);
-    if (bookDate.isEmpty) {
-      bookDate = _firstMatch(
-        r'(?:BOOK\s*DATE|BOOKING\s*DATE)\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{4}|[0-9]{4}[\/-][0-9]{1,2}[\/-][0-9]{1,2})',
-        text,
-      );
-    }
+    final bookDate = _firstMatch(
+      r'(?:BOOK\s*DATE|BOOKING\s*DATE)\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{4}|[0-9]{4}[\/-][0-9]{1,2}[\/-][0-9]{1,2})',
+      text,
+    );
     final parsedBookDate = _parseReceiptDate(bookDate);
     if (parsedBookDate != null) {
       bookingDate = parsedBookDate;
