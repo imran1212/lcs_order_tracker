@@ -328,6 +328,37 @@ class LcsApiService {
   }
 
   static String _eventStatusFromMap(Map map) {
+    // First inspect EVERY textual field for a terminal event. Some LCS API
+    // versions include a generic "status" (e.g. Arrived at Station) beside
+    // a more precise activity/remark (e.g. Returned to shipper).
+    final strings = map.values
+        .whereType<String>()
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+
+    bool isReturnEvent(String value) {
+      final s = value.toLowerCase();
+      return s.contains('return to shipper') ||
+          s.contains('returned to shipper') ||
+          s.contains('returning to shipper') ||
+          s.contains('returned to origin') ||
+          s.contains('return to origin') ||
+          s.contains('return shipment') ||
+          s == 'rts' ||
+          s.contains('collected');
+    }
+
+    for (final text in strings) {
+      if (isReturnEvent(text)) return text;
+    }
+    for (final text in strings) {
+      final normalized = text.toLowerCase();
+      if ((normalized.contains('delivered') && !normalized.contains('undelivered')) ||
+          normalized.contains('ready for return') ||
+          normalized.contains('ready to return')) return text;
+    }
+
     final direct = _mapValue(map, [
       'status', 'Staus', 'activity', 'tracking_status', 'Tracking Status',
       'status_description', 'Status Description', 'event_status',
@@ -337,19 +368,13 @@ class LcsApiService {
     if (direct != null && direct.toString().trim().isNotEmpty) {
       return direct.toString().trim();
     }
-    for (final entry in map.entries) {
-      if (entry.value is! String) continue;
-      final text = (entry.value as String).trim();
+    for (final text in strings) {
       final normalized = text.toLowerCase();
-      if (normalized.contains('return to shipper') ||
-          normalized.contains('returned to shipper') ||
-          normalized.contains('returning to shipper') ||
-          normalized.contains('ready for return') ||
-          normalized.contains('ready to return') ||
-          normalized == 'rts' ||
-          (normalized.contains('delivered') && !normalized.contains('undelivered')) ||
-          normalized.contains('arrived at station') ||
-          normalized.contains('arrived in ')) return text;
+      if (normalized.contains('arrived at station') ||
+          normalized.contains('arrived in ') ||
+          normalized.contains('dispatched') ||
+          normalized.contains('shipment picked') ||
+          normalized.contains('out for delivery')) return text;
     }
     return '';
   }
@@ -506,7 +531,7 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
       status == 'delivery completed') {
     return LcsDashboardStatusCategory.delivered;
   }
-  if (status.contains('return') || status == 'rts') {
+  if (status.contains('return') || status == 'rts' || status.contains('collected')) {
     return LcsDashboardStatusCategory.returned;
   }
   if (status.contains('out for delivery') || status == 'ofd') {
