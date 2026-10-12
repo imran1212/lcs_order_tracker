@@ -227,18 +227,36 @@ class LcsApiService {
     }
 
     final packet = packets.first;
-    final status = _cleanStatus(packet['booked_packet_status'] ?? packet['status']);
+    // Keep the booked status as fallback, but prefer the newest dated tracking
+    // event because carrier portals often show the latest movement as current status.
+    var status = _cleanStatus(packet['booked_packet_status'] ?? packet['status']);
     DateTime? statusDate = _dateFromMap(packet);
     DateTime? deliveryDate;
 
     final detail = packet['Tracking Detail'] ?? packet['tracking_detail'] ?? packet['trackingDetail'];
     final details = _maps(detail);
+    Map<String, dynamic>? latestDatedItem;
+    DateTime? latestEventDate;
+
     for (final item in details) {
-      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ?? item['activity'] ?? item['Activity'] ?? '').toString();
+      final itemStatus = (item['status'] ?? item['Status'] ?? item['Staus'] ??
+              item['activity'] ?? item['Activity'] ?? item['tracking_status'] ??
+              item['Tracking Status'] ?? item['description'] ?? item['Description'] ?? '')
+          .toString()
+          .trim();
       final itemDate = _dateFromMap(item);
-      if (itemDate != null && (statusDate == null || itemDate.isAfter(statusDate!))) {
-        statusDate = itemDate;
+
+      if (itemDate != null &&
+          (latestEventDate == null || itemDate.isAfter(latestEventDate))) {
+        latestEventDate = itemDate;
+        latestDatedItem = item;
+        if (itemStatus.isNotEmpty) status = itemStatus;
+      } else if (itemDate == null && latestDatedItem == null && itemStatus.isNotEmpty) {
+        // If the API provides no event dates, use the last history entry as a
+        // fallback rather than discarding tracking history completely.
+        status = itemStatus;
       }
+
       if (itemStatus.toLowerCase().contains('deliver') && itemDate != null) {
         if (deliveryDate == null || itemDate.isAfter(deliveryDate!)) {
           deliveryDate = itemDate;
@@ -246,6 +264,7 @@ class LcsApiService {
       }
     }
 
+    if (latestEventDate != null) statusDate = latestEventDate;
     if (status.toLowerCase().contains('deliver') && deliveryDate == null) {
       deliveryDate = statusDate;
     }
