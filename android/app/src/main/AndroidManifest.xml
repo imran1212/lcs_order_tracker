@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="LCS Tracker"
+        android:label="LCS Tracker by AQAS"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@drawable/ic_aqas_logo">
         <activity
             android:name=".MainActivity"
             android:exported="true"
