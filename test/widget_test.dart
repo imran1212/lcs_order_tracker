@@ -1,30 +1,70 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:lcs_order_tracker/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('LCS dashboard status classification', () {
+    test('classifies pending API sync separately', () {
+      expect(
+        classifyLcsDashboardStatus('Pending API Sync'),
+        LcsDashboardStatusCategory.pendingSync,
+      );
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('classifies pickup requests not sent as pending, not picked up', () {
+      expect(
+        classifyLcsDashboardStatus('Pickup Request not Send'),
+        LcsDashboardStatusCategory.pending,
+      );
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('classifies shipment picked status', () {
+      expect(
+        classifyLcsDashboardStatus('Shipment Picked at ORIGIN SUKKUR'),
+        LcsDashboardStatusCategory.shipmentPicked,
+      );
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('classifies forwarded parcels as in transit', () {
+      expect(
+        classifyLcsDashboardStatus('Forwarded to KOHAT'),
+        LcsDashboardStatusCategory.inTransit,
+      );
+    });
+
+    test('classifies arrival at station', () {
+      expect(
+        classifyLcsDashboardStatus('Arrived at Station in HYDERABAD'),
+        LcsDashboardStatusCategory.arrivedAtStation,
+      );
+    });
+
+    test('does not confuse undelivered with delivered', () {
+      expect(
+        classifyLcsDashboardStatus('Undelivered'),
+        LcsDashboardStatusCategory.deliveryIssue,
+      );
+      expect(
+        classifyLcsDashboardStatus('Delivered'),
+        LcsDashboardStatusCategory.delivered,
+      );
+    });
+
+    test('classifies out for delivery and returned statuses', () {
+      expect(
+        classifyLcsDashboardStatus('Out for Delivery'),
+        LcsDashboardStatusCategory.outForDelivery,
+      );
+      expect(
+        classifyLcsDashboardStatus('Return to Shipper'),
+        LcsDashboardStatusCategory.returned,
+      );
+    });
+
+    test('keeps unknown statuses visible in Other Status', () {
+      expect(
+        classifyLcsDashboardStatus('Some New LCS Status'),
+        LcsDashboardStatusCategory.other,
+      );
+    });
   });
 }
