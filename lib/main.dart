@@ -1292,7 +1292,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'LCS Tracker',
+                  'LCS Tracker by AQAS',
                   style: TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
@@ -1300,10 +1300,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Text(
                   'Order Management by AQAS',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey,
-                  ),
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Limited Licensed for AQAQ',
+                  style: TextStyle(fontSize: 8, color: Color(0xFF087A46), fontWeight: FontWeight.w700),
                 ),
               ],
             ),
