@@ -2286,6 +2286,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF8654E8)),
         _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2678E8)),
         _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFE99A13)),
+        _statCard('Assigned', count(LcsDashboardStatusCategory.assigned).toString(), Icons.assignment_ind_rounded, const Color(0xFF0D8A55)),
         _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFE54858)),
         _statCard('Ready to Return', count(LcsDashboardStatusCategory.readyToReturn).toString(), Icons.assignment_return_rounded, const Color(0xFFF06435)),
         _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF159B63)),
