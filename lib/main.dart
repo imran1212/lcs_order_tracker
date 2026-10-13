@@ -514,6 +514,7 @@ enum LcsDashboardStatusCategory {
   inTransit,
   arrivedAtStation,
   outForDelivery,
+  assigned,
   deliveryIssue,
   readyToReturn,
   delivered,
@@ -541,6 +542,11 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
   }
   if (status.contains('return') || status == 'rts' || status.contains('collected')) {
     return LcsDashboardStatusCategory.returned;
+  }
+  if (status.contains('assigned to courier') ||
+      status.contains('assigned to delivery') ||
+      status == 'assigned') {
+    return LcsDashboardStatusCategory.assigned;
   }
   if (status.contains('out for delivery') || status == 'ofd') {
     return LcsDashboardStatusCategory.outForDelivery;
@@ -594,6 +600,7 @@ bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
     'In Transit / Dispatched': LcsDashboardStatusCategory.inTransit,
     'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
     'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
+    'Assigned': LcsDashboardStatusCategory.assigned,
     'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
     'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
     'Delivered': LcsDashboardStatusCategory.delivered,
@@ -1641,6 +1648,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           'In Transit / Dispatched',
                           'Arrived at Station',
                           'Out for Delivery',
+                          'Assigned',
                           'Delivery Issue',
                           'Ready to Return',
                           'Delivered',
