@@ -342,6 +342,9 @@ class LcsApiService {
       return s.contains('return to shipper') ||
           s.contains('returned to shipper') ||
           s.contains('returning to shipper') ||
+          s.contains('return to sender') ||
+          s.contains('returned to sender') ||
+          s.contains('returning to sender') ||
           s.contains('returned to origin') ||
           s.contains('return to origin') ||
           s.contains('return shipment') ||
@@ -418,6 +421,11 @@ class LcsApiService {
       final returned = normalized.contains('return to shipper') ||
           normalized.contains('returned to shipper') ||
           normalized.contains('returning to shipper') ||
+          normalized.contains('return to sender') ||
+          normalized.contains('returned to sender') ||
+          normalized.contains('returning to sender') ||
+          normalized.contains('return to origin') ||
+          normalized.contains('returned to origin') ||
           normalized.contains('returned') ||
           normalized == 'rts' ||
           normalized.contains('return shipment');
