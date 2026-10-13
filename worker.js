@@ -78,6 +78,26 @@ export default {
         console.error("LCS upstream HTTP error:", upstream.status);
         return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
       }
+
+      // Temporary privacy-conscious diagnostic: log only tracking status/date
+      // fields from the upstream response, never API credentials or full payload.
+      try {
+        const packets = Array.isArray(result?.packet_list) ? result.packet_list : [];
+        const summaries = packets.slice(0, MAX_CNS).map((packet) => ({
+          cn: String(packet?.track_number ?? packet?.cn ?? packet?.booked_packet_no ?? ""),
+          topStatus: String(packet?.booked_packet_status ?? packet?.status ?? ""),
+          events: summarizeStatusEvents(packet).slice(0, 15),
+        }));
+        console.log("LCS upstream status diagnostic", {
+          httpStatus: upstream.status,
+          responseKeys: Object.keys(result || {}).slice(0, 25),
+          packetCount: packets.length,
+          requestedCount: numbers.length,
+          summaries,
+        });
+      } catch (diagnosticError) {
+        console.warn("LCS status diagnostic failed safely.");
+      }
       return json(result, 200, cors);
     } catch (error) {
       console.error("Worker failed:", error?.message || String(error));
@@ -147,6 +167,52 @@ async function handleLcsPush(request, env) {
     console.error("LCS push processing failed:", error?.message || String(error));
     return json([{ status: 0, errors: ["Internal processing error"] }], 500);
   }
+}
+
+function summarizeStatusEvents(packet) {
+  const events = [];
+  const statusKey = /^(status|bookedpacketstatus|activity|trackingstatus|statusdescription|eventstatus|description|remarks?|eventdescription|trackingstatusdescription)$/i;
+  const dateKey = /(date|time|datetime)$/i;
+  const allowedStatus = /(return|rts|deliver|arriv|dispatch|picked|out for delivery|pending|hold|cancel|attempt|consign|received|transit|booked|collected|undelivered)/i;
+  const seen = new Set();
+  function visit(value, depth = 0) {
+    if (depth > 7 || events.length >= 30 || value == null) return;
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object") visit(parsed, depth + 1);
+      } catch (_) {}
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const entries = Object.entries(value);
+    let status = "";
+    let date = "";
+    for (const [key, raw] of entries) {
+      if (typeof raw !== "string" && typeof raw !== "number") continue;
+      const text = String(raw).trim();
+      if (!text) continue;
+      if (statusKey.test(key.replace(/[^a-z]/gi, "")) && allowedStatus.test(text)) status = text;
+      if (dateKey.test(key.replace(/[^a-z]/gi, "")) && /\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4}/.test(text)) date = text;
+    }
+    if (status) {
+      const key = status + "|" + date;
+      if (!seen.has(key)) {
+        seen.add(key);
+        events.push({ status: status.slice(0, 120), date: date.slice(0, 40) });
+      }
+    }
+    for (const [key, child] of entries) {
+      if (child && typeof child === "object") visit(child, depth + 1);
+      else if (typeof child === "string" && /tracking|history|detail|activity|event|status/i.test(key)) visit(child, depth + 1);
+    }
+  }
+  visit(packet);
+  return events;
 }
 
 function constantTimeEqual(a, b) {
