@@ -2271,6 +2271,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     int count(LcsDashboardStatusCategory category) => counts[category] ?? 0;
 
+    // Keep Total Orders first, then sort all status cards by count descending.
+    final cards = <Map<String, dynamic>>[
+      {'title': 'Total Orders', 'value': orders.length, 'icon': Icons.inventory_2_rounded, 'color': const Color(0xFF087A46)},
+      {'title': 'Pending Sync', 'value': count(LcsDashboardStatusCategory.pendingSync), 'icon': Icons.sync_rounded, 'color': const Color(0xFF1687E8)},
+      {'title': 'Pending / Booked', 'value': count(LcsDashboardStatusCategory.pending), 'icon': Icons.hourglass_empty_rounded, 'color': const Color(0xFFF39A16)},
+      {'title': 'Shipment Picked', 'value': count(LcsDashboardStatusCategory.shipmentPicked), 'icon': Icons.inventory_rounded, 'color': const Color(0xFF159B63)},
+      {'title': 'In Transit / Dispatched', 'value': count(LcsDashboardStatusCategory.inTransit), 'icon': Icons.local_shipping_rounded, 'color': const Color(0xFF8654E8)},
+      {'title': 'Arrived at Station', 'value': count(LcsDashboardStatusCategory.arrivedAtStation), 'icon': Icons.location_on_rounded, 'color': const Color(0xFF2678E8)},
+      {'title': 'Out for Delivery', 'value': count(LcsDashboardStatusCategory.outForDelivery), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFE99A13)},
+      {'title': 'Assigned', 'value': count(LcsDashboardStatusCategory.assigned), 'icon': Icons.assignment_ind_rounded, 'color': const Color(0xFF0D8A55)},
+      {'title': 'Delivery Issue', 'value': count(LcsDashboardStatusCategory.deliveryIssue), 'icon': Icons.warning_amber_rounded, 'color': const Color(0xFFE54858)},
+      {'title': 'Ready to Return', 'value': count(LcsDashboardStatusCategory.readyToReturn), 'icon': Icons.assignment_return_rounded, 'color': const Color(0xFFF06435)},
+      {'title': 'Delivered', 'value': count(LcsDashboardStatusCategory.delivered), 'icon': Icons.check_circle_rounded, 'color': const Color(0xFF159B63)},
+      {'title': 'Returned', 'value': count(LcsDashboardStatusCategory.returned), 'icon': Icons.keyboard_return_rounded, 'color': const Color(0xFFE54858)},
+      {'title': 'Other Status', 'value': count(LcsDashboardStatusCategory.other), 'icon': Icons.help_outline_rounded, 'color': const Color(0xFF64748B)},
+    ];
+    cards.sort((a, b) {
+      if (a['title'] == 'Total Orders') return -1;
+      if (b['title'] == 'Total Orders') return 1;
+      return (b['value'] as int).compareTo(a['value'] as int);
+    });
+
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
@@ -2278,21 +2300,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
       childAspectRatio: 1.58,
-      children: [
-        _statCard('Total Orders', orders.length.toString(), Icons.inventory_2_rounded, const Color(0xFF087A46)),
-        _statCard('Pending Sync', count(LcsDashboardStatusCategory.pendingSync).toString(), Icons.sync_rounded, const Color(0xFF1687E8)),
-        _statCard('Pending / Booked', count(LcsDashboardStatusCategory.pending).toString(), Icons.hourglass_empty_rounded, const Color(0xFFF39A16)),
-        _statCard('Shipment Picked', count(LcsDashboardStatusCategory.shipmentPicked).toString(), Icons.inventory_rounded, const Color(0xFF159B63)),
-        _statCard('In Transit / Dispatched', count(LcsDashboardStatusCategory.inTransit).toString(), Icons.local_shipping_rounded, const Color(0xFF8654E8)),
-        _statCard('Arrived at Station', count(LcsDashboardStatusCategory.arrivedAtStation).toString(), Icons.location_on_rounded, const Color(0xFF2678E8)),
-        _statCard('Out for Delivery', count(LcsDashboardStatusCategory.outForDelivery).toString(), Icons.delivery_dining_rounded, const Color(0xFFE99A13)),
-        _statCard('Assigned', count(LcsDashboardStatusCategory.assigned).toString(), Icons.assignment_ind_rounded, const Color(0xFF0D8A55)),
-        _statCard('Delivery Issue', count(LcsDashboardStatusCategory.deliveryIssue).toString(), Icons.warning_amber_rounded, const Color(0xFFE54858)),
-        _statCard('Ready to Return', count(LcsDashboardStatusCategory.readyToReturn).toString(), Icons.assignment_return_rounded, const Color(0xFFF06435)),
-        _statCard('Delivered', count(LcsDashboardStatusCategory.delivered).toString(), Icons.check_circle_rounded, const Color(0xFF159B63)),
-        _statCard('Returned', count(LcsDashboardStatusCategory.returned).toString(), Icons.keyboard_return_rounded, const Color(0xFFE54858)),
-        _statCard('Other Status', count(LcsDashboardStatusCategory.other).toString(), Icons.help_outline_rounded, const Color(0xFF64748B)),
-      ],
+      children: cards.map((card) => _statCard(
+        card['title'] as String,
+        (card['value'] as int).toString(),
+        card['icon'] as IconData,
+        card['color'] as Color,
+      )).toList(),
     );
   }
 
