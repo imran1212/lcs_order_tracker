@@ -4385,6 +4385,46 @@ Future<void> _loadWorkerName() async {
     });
   }
 
+  String _normalizeCn(String value) =>
+      value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+
+  Future<List<String>> _findExistingCnNumbers(Iterable<String> values) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      throw StateError('Pehle app mein login karein.');
+    }
+
+    final profile = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(currentUser.uid)
+        .get();
+    final isAdmin = (profile.data()?['role'] ?? '').toString().toLowerCase() == 'admin';
+    final orders = FirebaseFirestore.instance.collection('orders');
+    final duplicates = <String>[];
+    final candidates = values
+        .map(_normalizeCn)
+        .where((cn) => cn.isNotEmpty)
+        .toSet();
+
+    for (final cn in candidates) {
+      // Firestore rules require worker queries to be scoped to that worker.
+      Query<Map<String, dynamic>> query = orders.where('cn', isEqualTo: cn);
+      if (!isAdmin) {
+        query = query.where('workerUid', isEqualTo: currentUser.uid);
+      }
+      var snapshot = await query.limit(1).get();
+      if (snapshot.docs.isEmpty && cn.toLowerCase() != cn) {
+        Query<Map<String, dynamic>> lowercaseQuery = orders.where('cn', isEqualTo: cn.toLowerCase());
+        if (!isAdmin) {
+          lowercaseQuery = lowercaseQuery.where('workerUid', isEqualTo: currentUser.uid);
+        }
+        snapshot = await lowercaseQuery.limit(1).get();
+      }
+      if (snapshot.docs.isNotEmpty) duplicates.add(cn);
+    }
+    return duplicates;
+  }
+
   Future<void> _saveBulkReceiptOrders() async {
     final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
     if (valid.isEmpty) {
@@ -4393,13 +4433,33 @@ Future<void> _loadWorkerName() async {
       );
       return;
     }
+    final normalizedCns = valid
+        .map((draft) => _normalizeCn((draft['cn'] ?? '').toString()))
+        .toList();
+    final seenCns = <String>{};
+    final repeatedInBatch = normalizedCns.where((cn) => !seenCns.add(cn)).toSet();
+    if (repeatedInBatch.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Selected receipts mein duplicate CN hain: ${repeatedInBatch.join(', ')}. Inhein correct karke dobara save karein.')),
+      );
+      return;
+    }
+
     try {
+      final existingCns = await _findExistingCnNumbers(normalizedCns);
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ye CN pehle se saved hain: ${existingCns.join(', ')}. Duplicate orders save nahi huay.')),
+        );
+        return;
+      }
       final batch = FirebaseFirestore.instance.batch();
       final ordersCollection = FirebaseFirestore.instance.collection('orders');
       for (final draft in valid) {
         final ref = ordersCollection.doc();
         final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = (draft['cn'] ?? '').toString().trim();
+        final cn = _normalizeCn((draft['cn'] ?? '').toString());
         batch.set(ref, {
           'customer': (draft['customer'] ?? '').toString().trim(),
           'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
@@ -4460,6 +4520,17 @@ Future<void> _loadWorkerName() async {
     final finalBookingDate = bookingDate ?? DateTime.now();
 
     try {
+      final cn = _normalizeCn(cnController.text);
+      final existingCns = await _findExistingCnNumbers([cn]);
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CN $cn pehle se saved hai. Duplicate order create nahi hua.')),
+        );
+        return;
+      }
+      // Store CNs in a consistent format to reduce case/spacing duplicates.
+      cnController.text = cn;
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
 
       await orderRef.set({
