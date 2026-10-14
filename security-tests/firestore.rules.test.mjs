@@ -101,6 +101,9 @@ test('disabled worker can read own profile but cannot access orders', async () =
 test('worker can create an order and its initial history atomically', async () => {
   const db = testEnv.authenticatedContext('worker-a').firestore();
   const batch = writeBatch(db);
+  batch.set(doc(db, 'cnRegistry/CN-A-NEW'), {
+    cn: 'CN-A-NEW', orderId: 'order-new', workerUid: 'worker-a', createdBy: 'worker-a',
+  });
   batch.set(doc(db, 'orders/order-new'), {
     cn: 'CN-A-NEW', workerUid: 'worker-a', status: 'Pending API Sync',
   });
@@ -135,10 +138,10 @@ test('unauthenticated clients cannot read orders', async () => {
 test('CN registry allows one owner reservation and blocks a duplicate reservation', async () => {
   const workerA = testEnv.authenticatedContext('worker-a').firestore();
   const workerB = testEnv.authenticatedContext('worker-b').firestore();
-  await assertSucceeds(setDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), {
+  await assertSucceeds(setDoc(doc(workerA, 'cnRegistry/QL1234'), {
     cn: 'QL1234', orderId: 'order-registry-a', workerUid: 'worker-a', createdBy: 'worker-a',
   }));
-  await assertFails(setDoc(doc(workerB, 'cnRegistry/Q04xMjM0'), {
+  await assertFails(setDoc(doc(workerB, 'cnRegistry/QL1234'), {
     cn: 'QL1234', orderId: 'order-registry-b', workerUid: 'worker-b', createdBy: 'worker-b',
   }));
   await assertFails(updateDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), { orderId: 'tampered' }));
