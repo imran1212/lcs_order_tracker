@@ -1,3 +1,27 @@
+val aqasUploadStoreFile = providers.gradleProperty("AQAS_UPLOAD_STORE_FILE").orNull
+    ?: System.getenv("AQAS_UPLOAD_STORE_FILE")
+val aqasUploadStorePassword = providers.gradleProperty("AQAS_UPLOAD_STORE_PASSWORD").orNull
+    ?: System.getenv("AQAS_UPLOAD_STORE_PASSWORD")
+val aqasUploadKeyAlias = providers.gradleProperty("AQAS_UPLOAD_KEY_ALIAS").orNull
+    ?: System.getenv("AQAS_UPLOAD_KEY_ALIAS")
+val aqasUploadKeyPassword = providers.gradleProperty("AQAS_UPLOAD_KEY_PASSWORD").orNull
+    ?: System.getenv("AQAS_UPLOAD_KEY_PASSWORD")
+val hasAqasUploadSigning = listOf(
+    aqasUploadStoreFile,
+    aqasUploadStorePassword,
+    aqasUploadKeyAlias,
+    aqasUploadKeyPassword,
+).all { !it.isNullOrBlank() }
+
+if (gradle.startParameter.taskNames.any { it.contains("bundleRelease", ignoreCase = true) } &&
+    !hasAqasUploadSigning
+) {
+    throw GradleException(
+        "Google Play AAB builds require AQAS_UPLOAD_STORE_FILE, AQAS_UPLOAD_STORE_PASSWORD, " +
+            "AQAS_UPLOAD_KEY_ALIAS, and AQAS_UPLOAD_KEY_PASSWORD. QA APKs may use debug signing."
+    )
+}
+
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
@@ -22,11 +46,26 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("aqasRelease") {
+            if (hasAqasUploadSigning) {
+                storeFile = file(aqasUploadStoreFile!!)
+                storePassword = aqasUploadStorePassword
+                keyAlias = aqasUploadKeyAlias
+                keyPassword = aqasUploadKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         getByName("release") {
-            // CI/device-test signing only. Replace with a private upload key
-            // before producing the Google Play submission AAB.
-            signingConfig = signingConfigs.getByName("debug")
+            // Debug signing is permitted only for QA APK builds. bundleRelease
+            // fails closed unless a private AQAS upload key is configured.
+            signingConfig = if (hasAqasUploadSigning) {
+                signingConfigs.getByName("aqasRelease")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
         }
