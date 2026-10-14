@@ -41,8 +41,18 @@ export default {
       const auth = request.headers.get("Authorization") || "";
       const match = auth.match(/^Bearer\s+(.+)$/i);
       if (!match) return json({ error: "Missing Firebase ID token." }, 401, cors);
-      const user = await verifyFirebaseToken(match[1].trim(), env.FIREBASE_PROJECT_ID);
+      const idToken = match[1].trim();
+      const user = await verifyFirebaseToken(idToken, env.FIREBASE_PROJECT_ID);
       if (!user) return json({ error: "Invalid or expired Firebase token." }, 401, cors);
+
+      // Verify the user's Firestore profile and active state server-side.
+      // A valid Firebase token alone must not grant access to the courier API.
+      const profile = await loadUserProfile(env.FIREBASE_PROJECT_ID, idToken, user.uid);
+      if (!profile) return json({ error: "User profile unavailable or access denied." }, 403, cors);
+      if (profile.active === false) return json({ error: "Account is disabled." }, 403, cors);
+      if (profile.role !== "admin" && profile.role !== "worker") {
+        return json({ error: "Account role is not authorized." }, 403, cors);
+      }
 
       const contentType = request.headers.get("Content-Type") || "";
       if (!contentType.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json." }, 415, cors);
@@ -60,7 +70,20 @@ export default {
         return json({ error: "Invalid CN number format." }, 400, cors);
       }
       const numbers = [...new Set(submittedNumbers)];
+
+      // Workers may track only CNs assigned to their own orders. Admins retain
+      // organization-wide lookup access. Firestore security rules must permit
+      // workers to query orders where workerUid equals their authenticated UID.
+      if (profile.role !== "admin") {
+        for (const cn of numbers) {
+          const owned = await userOwnsOrder(env.FIREBASE_PROJECT_ID, idToken, user.uid, cn);
+          if (!owned) {
+            return json({ error: "One or more tracking numbers are not assigned to this account." }, 403, cors);
+          }
+        }
+      }
       console.log("LCS tracking request accepted.", { uid: user.uid, requestedCount: submittedNumbers.length, uniqueCount: numbers.length });
+
       const upstream = await fetch(LCS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -79,25 +102,7 @@ export default {
         return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
       }
 
-      // Temporary privacy-conscious diagnostic: log only tracking status/date
-      // fields from the upstream response, never API credentials or full payload.
-      try {
-        const packets = Array.isArray(result?.packet_list) ? result.packet_list : [];
-        const summaries = packets.slice(0, MAX_CNS).map((packet) => ({
-          cn: String(packet?.track_number ?? packet?.cn ?? packet?.booked_packet_no ?? ""),
-          topStatus: String(packet?.booked_packet_status ?? packet?.status ?? ""),
-          events: summarizeStatusEvents(packet).slice(0, 15),
-        }));
-        console.log("LCS upstream status diagnostic", {
-          httpStatus: upstream.status,
-          responseKeys: Object.keys(result || {}).slice(0, 25),
-          packetCount: packets.length,
-          requestedCount: numbers.length,
-          summaries,
-        });
-      } catch (diagnosticError) {
-        console.warn("LCS status diagnostic failed safely.");
-      }
+      // Do not log CN numbers, customer data, or courier status payloads.
       return json(result, 200, cors);
     } catch (error) {
       console.error("Worker failed:", error?.message || String(error));
@@ -105,6 +110,63 @@ export default {
     }
   }
 };
+
+async function loadUserProfile(projectId, idToken, uid) {
+  try {
+    const path = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/users/${encodeURIComponent(uid)}`;
+    const response = await fetch(path, {
+      headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const document = await response.json();
+    const fields = document?.fields || {};
+    const role = fields.role?.stringValue;
+    const activeField = fields.active;
+    const active = activeField == null
+      ? true
+      : activeField.booleanValue === true ||
+        (activeField.stringValue != null && activeField.stringValue.toLowerCase() === "true");
+    if (typeof role !== "string" || !role.trim()) return null;
+    return { role: role.trim().toLowerCase(), active };
+  } catch {
+    return null;
+  }
+}
+
+async function userOwnsOrder(projectId, idToken, uid, cn) {
+  try {
+    const endpoint = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents:runQuery`;
+    const query = {
+      structuredQuery: {
+        from: [{ collectionId: "orders" }],
+        where: {
+          compositeFilter: {
+            op: "AND",
+            filters: [
+              { fieldFilter: { field: { fieldPath: "workerUid" }, op: "EQUAL", value: { stringValue: uid } } },
+              { fieldFilter: { field: { fieldPath: "cn" }, op: "EQUAL", value: { stringValue: cn } } },
+            ],
+          },
+        },
+        limit: 1,
+      },
+    };
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(query),
+    });
+    if (!response.ok) return false;
+    const rows = await response.json();
+    return Array.isArray(rows) && rows.some(row => typeof row?.document?.name === "string");
+  } catch {
+    return false;
+  }
+}
 
 async function handleLcsPush(request, env) {
   try {
