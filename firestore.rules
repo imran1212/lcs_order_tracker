@@ -58,8 +58,8 @@ service cloud.firestore {
           (ownsOrderData(resource.data) &&
            ownsOrderData(request.resource.data)));
 
-      allow delete: if activeUser() &&
-        (isAdmin() || ownsOrderData(resource.data));
+      // The app's UI reserves permanent order deletion for admins.
+      allow delete: if isAdmin();
 
       match /lcsStatusHistory/{eventId} {
         allow get, list: if canReadOrderData(
