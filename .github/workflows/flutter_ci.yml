@@ -13,6 +13,10 @@ on:
       - "pubspec.yaml"
       - "pubspec.lock"
       - "android/**"
+      - "worker.js"
+      - "firestore.rules"
+      - "firebase.json"
+      - "wrangler.toml"
       - ".github/workflows/flutter_ci.yml"
   pull_request:
     branches:
@@ -46,6 +50,12 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Validate Cloudflare Worker syntax
+        run: node --check worker.js
+
+      - name: Validate Firebase rules config
+        run: node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('firebase.json','utf8')); if(!c.firestore || c.firestore.rules !== 'firestore.rules') process.exit(1)"
 
       - name: Resolve dependencies
         run: flutter pub get
