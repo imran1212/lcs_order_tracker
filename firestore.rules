@@ -106,6 +106,17 @@ service cloud.firestore {
       }
     }
 
+    // A CN can be reserved only once; clients cannot overwrite reservations.
+    match /cnRegistry/{cnKey} {
+      allow get: if activeUser();
+      allow list: if false;
+      allow create: if activeUser() &&
+        !exists(/databases/$(database)/documents/cnRegistry/$(cnKey)) &&
+        (isAdmin() || request.resource.data.get('workerUid', '') == request.auth.uid);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // Deny every unrecognized collection and document path by default.
     match /{document=**} {
       allow read, write: if false;
