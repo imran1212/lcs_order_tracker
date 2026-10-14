@@ -57,7 +57,7 @@ jobs:
           cache: true
 
       - name: Validate Cloudflare Worker syntax
-        run: node --check worker.js
+        run: node --input-type=module --check < worker.js
 
       - name: Validate Firebase rules config
         run: node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('firebase.json','utf8')); if(!c.firestore || c.firestore.rules !== 'firestore.rules') process.exit(1)"
