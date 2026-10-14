@@ -1,13 +1,8 @@
 name: Deploy LCS Cloudflare Worker
 
+# Production deployment is deliberately manual. Test Firebase rules and the
+# worker end-to-end first; do not deploy as a side effect of merging a PR.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "worker.js"
-      - "wrangler.toml"
-      - ".github/workflows/deploy_worker.yml"
   workflow_dispatch:
 
 permissions:
@@ -16,6 +11,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
