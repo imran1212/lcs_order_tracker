@@ -1,0 +1,5 @@
+package pk.aqas.lcstracker
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
