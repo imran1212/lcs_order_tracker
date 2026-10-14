@@ -16,7 +16,8 @@ service cloud.firestore {
 
     function activeUser() {
       return hasProfile() &&
-        get(profilePath(request.auth.uid)).data.get('active', true) != false;
+        get(profilePath(request.auth.uid)).data.get('active', true) != false &&
+        get(profilePath(request.auth.uid)).data.get('active', true) != 'false';
     }
 
     function isAdmin() {
@@ -33,7 +34,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if activeUser() && (request.auth.uid == userId || isAdmin());
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
 
       // Worker profiles are provisioned by an authenticated admin only.
