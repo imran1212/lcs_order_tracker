@@ -3502,7 +3502,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (confirmed != true) return;
 
     try {
-      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).delete();
+      final db = FirebaseFirestore.instance;
+      final orderRef = db.collection('orders').doc(widget.orderId);
+      await db.runTransaction((transaction) async {
+        final orderSnapshot = await transaction.get(orderRef);
+        if (!orderSnapshot.exists) return;
+        final orderData = orderSnapshot.data() ?? <String, dynamic>{};
+        final cn = _normalizeCn((orderData['cn'] ?? '').toString());
+        if (cn.isNotEmpty) {
+          final registryRef = _cnRegistryRef(cn);
+          final registrySnapshot = await transaction.get(registryRef);
+          if (registrySnapshot.exists && registrySnapshot.data()?['orderId'] == widget.orderId) {
+            transaction.delete(registryRef);
+          }
+        }
+        transaction.delete(orderRef);
+      });
       if (context.mounted) Navigator.pop(context);
     } catch (e) {
       if (context.mounted) {
@@ -4386,43 +4401,31 @@ Future<void> _loadWorkerName() async {
   }
 
   String _normalizeCn(String value) =>
-      value.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+      value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+
+  String _cnRegistryId(String cn) =>
+      base64Url.encode(utf8.encode(_normalizeCn(cn))).replaceAll('=', '');
+
+  DocumentReference<Map<String, dynamic>> _cnRegistryRef(String cn) =>
+      FirebaseFirestore.instance.collection('cnRegistry').doc(_cnRegistryId(cn));
 
   Future<List<String>> _findExistingCnNumbers(Iterable<String> values) async {
     final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      throw StateError('Pehle app mein login karein.');
-    }
+    if (currentUser == null) throw StateError('Pehle app mein login karein.');
 
-    final profile = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(currentUser.uid)
-        .get();
+    final profile = await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).get();
     final isAdmin = (profile.data()?['role'] ?? '').toString().toLowerCase() == 'admin';
-    final orders = FirebaseFirestore.instance.collection('orders');
-    final duplicates = <String>[];
-    final candidates = values
-        .map(_normalizeCn)
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('orders');
+    if (!isAdmin) query = query.where('workerUid', isEqualTo: currentUser.uid);
+
+    // Compare normalized values in accessible orders; don't rely on exact-case CN queries.
+    final snapshot = await query.get();
+    final existing = snapshot.docs
+        .map((doc) => _normalizeCn((doc.data()['cn'] ?? '').toString()))
         .where((cn) => cn.isNotEmpty)
         .toSet();
-
-    for (final cn in candidates) {
-      // Firestore rules require worker queries to be scoped to that worker.
-      Query<Map<String, dynamic>> query = orders.where('cn', isEqualTo: cn);
-      if (!isAdmin) {
-        query = query.where('workerUid', isEqualTo: currentUser.uid);
-      }
-      var snapshot = await query.limit(1).get();
-      if (snapshot.docs.isEmpty && cn.toLowerCase() != cn) {
-        Query<Map<String, dynamic>> lowercaseQuery = orders.where('cn', isEqualTo: cn.toLowerCase());
-        if (!isAdmin) {
-          lowercaseQuery = lowercaseQuery.where('workerUid', isEqualTo: currentUser.uid);
-        }
-        snapshot = await lowercaseQuery.limit(1).get();
-      }
-      if (snapshot.docs.isNotEmpty) duplicates.add(cn);
-    }
-    return duplicates;
+    final candidates = values.map(_normalizeCn).where((cn) => cn.isNotEmpty).toSet();
+    return candidates.where(existing.contains).toList();
   }
 
   Future<void> _saveBulkReceiptOrders() async {
@@ -4454,13 +4457,28 @@ Future<void> _loadWorkerName() async {
         );
         return;
       }
-      final batch = FirebaseFirestore.instance.batch();
-      final ordersCollection = FirebaseFirestore.instance.collection('orders');
-      for (final draft in valid) {
-        final ref = ordersCollection.doc();
+      final db = FirebaseFirestore.instance;
+      final ordersCollection = db.collection('orders');
+      final orderRefs = valid.map((_) => ordersCollection.doc()).toList();
+      final registryRefs = normalizedCns.map(_cnRegistryRef).toList();
+      await db.runTransaction((transaction) async {
+        final registrySnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+        for (final registryRef in registryRefs) {
+          registrySnapshots.add(await transaction.get(registryRef));
+        }
+        final occupied = <String>[];
+        for (var i = 0; i < registrySnapshots.length; i++) {
+          if (registrySnapshots[i].exists) occupied.add(normalizedCns[i]);
+        }
+        if (occupied.isNotEmpty) {
+          throw StateError('CN pehle se reserved hai: ${occupied.toSet().join(', ')}');
+        }
+        for (var i = 0; i < valid.length; i++) {
+          final draft = valid[i];
+          final ref = orderRefs[i];
         final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
         final cn = _normalizeCn((draft['cn'] ?? '').toString());
-        batch.set(ref, {
+        transaction.set(ref, {
           'customer': (draft['customer'] ?? '').toString().trim(),
           'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
           'cn': cn,
@@ -4480,7 +4498,7 @@ Future<void> _loadWorkerName() async {
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
-        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
+        transaction.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
           'cn': cn,
           'previousStatus': '',
           'status': 'Pending API Sync',
@@ -4488,8 +4506,15 @@ Future<void> _loadWorkerName() async {
           'activityDate': Timestamp.fromDate(date),
           'recordedAt': FieldValue.serverTimestamp(),
         });
-      }
-      await batch.commit();
+          transaction.set(registryRefs[i], {
+            'cn': normalizedCns[i],
+            'orderId': ref.id,
+            'workerUid': widget.workerUid,
+            'createdBy': FirebaseAuth.instance.currentUser!.uid,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
       if (!mounted) return;
       final skipped = _bulkReceiptDrafts.length - valid.length;
       Navigator.pop(context);
@@ -4529,11 +4554,22 @@ Future<void> _loadWorkerName() async {
         );
         return;
       }
-      // Store CNs in a consistent format to reduce case/spacing duplicates.
+      // Atomic CN reservation prevents two concurrent saves from creating the same CN.
       cnController.text = cn;
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
-
-      await orderRef.set({
+      final db = FirebaseFirestore.instance;
+      final orderRef = db.collection('orders').doc();
+      final registryRef = _cnRegistryRef(cn);
+      await db.runTransaction((transaction) async {
+        final registry = await transaction.get(registryRef);
+        if (registry.exists) throw StateError('CN $cn pehle se reserved hai.');
+        transaction.set(registryRef, {
+          'cn': cn,
+          'orderId': orderRef.id,
+          'workerUid': widget.workerUid,
+          'createdBy': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef, {
         'customer': customerController.text.trim(),
         'customerPhone': customerPhoneController.text.trim(),
         'cn': cnController.text.trim(),
@@ -4551,9 +4587,19 @@ Future<void> _loadWorkerName() async {
         'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'order_created',
+          'activityDate': Timestamp.fromDate(finalBookingDate),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
       });
 
-      // LCS_STATUS_HISTORY_V1: save the initial order status.
+      // LCS_STATUS_HISTORY_V1: initial status is committed with the order.
+      /*
       await orderRef.collection('lcsStatusHistory')
           .doc('order_created_pending')
           .set({
@@ -4564,6 +4610,7 @@ Future<void> _loadWorkerName() async {
         'activityDate': Timestamp.fromDate(finalBookingDate),
         'recordedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      */
 
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
