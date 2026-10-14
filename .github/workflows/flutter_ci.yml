@@ -28,6 +28,10 @@ on:
       - "pubspec.yaml"
       - "pubspec.lock"
       - "android/**"
+      - "worker.js"
+      - "firestore.rules"
+      - "firebase.json"
+      - "wrangler.toml"
       - ".github/workflows/flutter_ci.yml"
   workflow_dispatch:
 
