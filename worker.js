@@ -231,52 +231,6 @@ async function handleLcsPush(request, env) {
   }
 }
 
-function summarizeStatusEvents(packet) {
-  const events = [];
-  const statusKey = /^(status|bookedpacketstatus|activity|trackingstatus|statusdescription|eventstatus|description|remarks?|eventdescription|trackingstatusdescription)$/i;
-  const dateKey = /(date|time|datetime)$/i;
-  const allowedStatus = /(return|rts|deliver|arriv|dispatch|picked|out for delivery|pending|hold|cancel|attempt|consign|received|transit|booked|collected|undelivered)/i;
-  const seen = new Set();
-  function visit(value, depth = 0) {
-    if (depth > 7 || events.length >= 30 || value == null) return;
-    if (typeof value === "string") {
-      try {
-        const parsed = JSON.parse(value);
-        if (parsed && typeof parsed === "object") visit(parsed, depth + 1);
-      } catch (_) {}
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item, depth + 1);
-      return;
-    }
-    if (typeof value !== "object") return;
-    const entries = Object.entries(value);
-    let status = "";
-    let date = "";
-    for (const [key, raw] of entries) {
-      if (typeof raw !== "string" && typeof raw !== "number") continue;
-      const text = String(raw).trim();
-      if (!text) continue;
-      if (statusKey.test(key.replace(/[^a-z]/gi, "")) && allowedStatus.test(text)) status = text;
-      if (dateKey.test(key.replace(/[^a-z]/gi, "")) && /\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4}/.test(text)) date = text;
-    }
-    if (status) {
-      const key = status + "|" + date;
-      if (!seen.has(key)) {
-        seen.add(key);
-        events.push({ status: status.slice(0, 120), date: date.slice(0, 40) });
-      }
-    }
-    for (const [key, child] of entries) {
-      if (child && typeof child === "object") visit(child, depth + 1);
-      else if (typeof child === "string" && /tracking|history|detail|activity|event|status/i.test(key)) visit(child, depth + 1);
-    }
-  }
-  visit(packet);
-  return events;
-}
-
 function constantTimeEqual(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
