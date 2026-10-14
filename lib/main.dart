@@ -12,13 +12,14 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// LCS_BACKGROUND_AUTO_SYNC_V1
+// LCS_BACKGROUND_AUTO_SYNC_V2
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
+const String _lcsBulkSyncTask = 'lcsOrderBulkSync';
 
 @pragma('vm:entry-point')
 void lcsBackgroundCallbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
-    if (task != _lcsBackgroundSyncTask) return true;
+    if (task != _lcsBackgroundSyncTask && task != _lcsBulkSyncTask) return true;
     try {
       await Firebase.initializeApp();
       final auth = FirebaseAuth.instance;
@@ -32,58 +33,72 @@ void lcsBackgroundCallbackDispatcher() {
       }
       if (user == null) {
         debugPrint('LCS background sync skipped: no signed-in user.');
-        return true;
+        return false;
       }
 
-      final query = await FirebaseFirestore.instance
-          .collection('orders')
-          .where('workerUid', isEqualTo: user.uid)
-          .limit(10)
-          .get();
-      for (final doc in query.docs) {
+      final isBulk = task == _lcsBulkSyncTask;
+      final isAdmin = inputData?['isAdmin'] == true;
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('orders');
+      if (!isAdmin) {
+        query = query.where('workerUid', isEqualTo: user.uid);
+      }
+      // WorkManager execution is bounded by Android. Process a conservative batch
+      // so the OS can retry work rather than running one unbounded job.
+      final snapshot = await query.limit(isBulk ? 150 : 10).get();
+      final byCn = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+      for (final doc in snapshot.docs) {
         final data = doc.data();
         final cn = (data['cn'] ?? '').toString().trim();
         if (cn.isEmpty) continue;
-        final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
-        final isDelivered = (currentStatus.contains('delivered') &&
-                !currentStatus.contains('undelivered')) ||
-            currentStatus == 'delivery completed';
-        if (isDelivered) continue;
-        final lastSyncRaw = data['lastApiSyncAt'];
-        if (lastSyncRaw is Timestamp &&
-            DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
-          continue;
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+        final delivered = (status.contains('delivered') && !status.contains('undelivered')) ||
+            status == 'delivery completed';
+        if (delivered) continue;
+        if (!isBulk) {
+          final lastSyncRaw = data['lastApiSyncAt'];
+          if (lastSyncRaw is Timestamp &&
+              DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
+            continue;
+          }
         }
+        (byCn[cn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
+      }
+
+      for (final entry in byCn.entries) {
+        final cn = entry.value.first.data()['cn'].toString().trim();
         try {
-          final previousStatus = (data['status'] ?? 'Pending API Sync').toString().trim();
           final result = await LcsApiService.syncCn(cn);
-          await doc.reference.update({
-            'status': result.status,
-            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-            'lastApiSyncAt': FieldValue.serverTimestamp(),
-            'lcsRawStatus': result.status,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          if (previousStatus != result.status.trim()) {
-            final dateKey = (result.statusDate ?? DateTime.now()).toUtc().toIso8601String()
-                .replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
-            final eventId = 'background_${result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_$dateKey';
-            await doc.reference.collection('lcsStatusHistory').doc(eventId).set({
-              'cn': cn,
-              'previousStatus': previousStatus,
-              'status': result.status.trim(),
-              'source': 'background_auto_sync',
-              'activityDate': result.statusDate == null
-                  ? Timestamp.now()
-                  : Timestamp.fromDate(result.statusDate!),
-              'recordedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
+          for (final doc in entry.value) {
+            final data = doc.data();
+            final previousStatus = (data['status'] ?? 'Pending API Sync').toString().trim();
+            await doc.reference.update({
+              'status': result.status,
+              'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+              'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+              'lastApiSyncAt': FieldValue.serverTimestamp(),
+              'lcsRawStatus': result.status,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            if (previousStatus != result.status.trim()) {
+              final dateKey = (result.statusDate ?? DateTime.now()).toUtc().toIso8601String()
+                  .replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+              final eventId = 'background_${result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_$dateKey';
+              await doc.reference.collection('lcsStatusHistory').doc(eventId).set({
+                'cn': cn,
+                'previousStatus': previousStatus,
+                'status': result.status.trim(),
+                'source': isBulk ? 'background_bulk_sync' : 'background_auto_sync',
+                'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
+                'recordedAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+            }
           }
         } catch (error) {
-          debugPrint('LCS background sync failed for order ${doc.id}: $error');
+          debugPrint('LCS background sync failed for $cn: $error');
         }
       }
+      // Bulk sync runs as a separate OS-managed one-off task. The OS may stop
+      // a long task; users can safely tap Sync All again to retry remaining work.
       return true;
     } catch (error) {
       debugPrint('LCS background sync task failed: $error');
@@ -1089,63 +1104,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     final targets = targetsByCn.entries.toList();
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')),
+      );
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Sync all active tracking numbers?'),
-        content: Text('${targets.length} unique tracking number(s) sync honge. Delivered orders skip honge; duplicate CN ek hi dafa sync hoga.'),
+        content: Text(
+          '${targets.length} unique tracking number(s) background mein sync ke liye queue honge. '
+          'Delivered orders skip honge; duplicate CN ek hi dafa sync hoga. '
+          'App minimize kar sakte hain. Android ki battery/force-stop restrictions ki wajah se timing vary kar sakti hai.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Sync')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Background Sync')),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() { _bulkSyncingOrders = true; _bulkSyncCompleted = 0; _bulkSyncTotal = targets.length; });
-    var succeeded = 0;
-    var failed = 0;
+    setState(() {
+      _bulkSyncingOrders = true;
+      _bulkSyncCompleted = 0;
+      _bulkSyncTotal = targets.length;
+    });
     try {
-      for (final entry in targets) {
-        if (!mounted) break;
-        final duplicateOrders = entry.value;
-        final cn = duplicateOrders.first.cn.trim();
-        try {
-          final result = await LcsApiService.syncCn(cn);
-          for (final order in duplicateOrders) {
-            final ref = FirebaseFirestore.instance.collection('orders').doc(order.id);
-            await ref.update({
-              'status': result.status,
-              'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-              'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-              'lastApiSyncAt': FieldValue.serverTimestamp(),
-              'lcsRawStatus': result.status,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            if (order.status.trim() != result.status.trim()) {
-              final statusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-              final timeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-              await ref.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
-                'cn': order.cn, 'previousStatus': order.status.trim(), 'status': result.status.trim(),
-                'source': 'dashboard_bulk_sync',
-                'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
-                'recordedAt': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
-            }
-          }
-          succeeded++;
-        } catch (error) {
-          failed++;
-          debugPrint('Bulk LCS sync failed for ${cn}: ${error}');
-        }
-        if (mounted) setState(() => _bulkSyncCompleted++);
-      }
-    } finally {
+      await Workmanager().registerOneOffTask(
+        'lcs-bulk-sync-${DateTime.now().millisecondsSinceEpoch}',
+        _lcsBulkSyncTask,
+        inputData: {'isAdmin': isAdmin, 'workerUid': workerUid},
+        constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingWorkPolicy.replace,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Background Sync All queue ho gayi: ${targets.length} unique CN. App minimize kar sakte hain.'),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      // The OS-managed task continues independently of this screen. Refresh the
+      // live Firestore stream when the user returns to see updated statuses.
+      setState(() => _bulkSyncingOrders = false);
+    } catch (error) {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('LCS sync complete: ${succeeded} tracking number(s) synced, ${failed} failed. Delivered orders skipped.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Background sync start nahi ho saki: $error')),
+        );
       }
     }
   }
