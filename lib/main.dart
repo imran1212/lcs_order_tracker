@@ -38,30 +38,34 @@ void lcsBackgroundCallbackDispatcher() {
 
       final isBulk = task == _lcsBulkSyncTask;
       final isAdmin = inputData?['isAdmin'] == true;
-      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('orders');
-      if (!isAdmin) {
-        query = query.where('workerUid', isEqualTo: user.uid);
-      }
-      // WorkManager execution is bounded by Android. Process a conservative batch
-      // so the OS can retry work rather than running one unbounded job.
-      final snapshot = await query.limit(isBulk ? 150 : 10).get();
       final byCn = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final cn = (data['cn'] ?? '').toString().trim();
-        if (cn.isEmpty) continue;
-        final status = (data['status'] ?? '').toString().trim().toLowerCase();
-        final delivered = (status.contains('delivered') && !status.contains('undelivered')) ||
-            status == 'delivery completed';
-        if (delivered) continue;
-        if (!isBulk) {
-          final lastSyncRaw = data['lastApiSyncAt'];
-          if (lastSyncRaw is Timestamp &&
-              DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
-            continue;
+      if (isBulk) {
+        final cnList = (inputData?['cnList'] as List?)?.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toSet() ?? <String>{};
+        for (final requestedCn in cnList) {
+          final matches = await FirebaseFirestore.instance.collection('orders').where('cn', isEqualTo: requestedCn).get();
+          for (final doc in matches.docs) {
+            if (!isAdmin && (doc.data()['workerUid'] ?? '').toString() != user.uid) continue;
+            final status = (doc.data()['status'] ?? '').toString().trim().toLowerCase();
+            final delivered = (status.contains('delivered') && !status.contains('undelivered')) ||
+                status == 'delivery completed';
+            if (delivered) continue;
+            (byCn[requestedCn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
           }
         }
-        (byCn[cn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
+      } else {
+        Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('orders').where('workerUid', isEqualTo: user.uid);
+        final snapshot = await query.limit(10).get();
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final cn = (data['cn'] ?? '').toString().trim();
+          if (cn.isEmpty) continue;
+          final status = (data['status'] ?? '').toString().trim().toLowerCase();
+          final delivered = (status.contains('delivered') && !status.contains('undelivered')) || status == 'delivery completed';
+          if (delivered) continue;
+          final lastSyncRaw = data['lastApiSyncAt'];
+          if (lastSyncRaw is Timestamp && DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) continue;
+          (byCn[cn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
+        }
       }
 
       for (final entry in byCn.entries) {
@@ -1131,13 +1135,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _bulkSyncTotal = targets.length;
     });
     try {
-      await Workmanager().registerOneOffTask(
-        'lcs-bulk-sync-${DateTime.now().millisecondsSinceEpoch}',
-        _lcsBulkSyncTask,
-        inputData: {'isAdmin': isAdmin, 'workerUid': workerUid},
-        constraints: Constraints(networkType: NetworkType.connected),
-        existingWorkPolicy: ExistingWorkPolicy.replace,
-      );
+      final cnList = targets.map((entry) => entry.value.first.cn.trim()).toList();
+      // Small independent OS-managed jobs keep each execution bounded and allow
+      // Android to retry a batch when connectivity returns.
+      for (var i = 0; i < cnList.length; i += 10) {
+        final batch = cnList.skip(i).take(10).toList();
+        await Workmanager().registerOneOffTask(
+          'lcs-bulk-sync-${DateTime.now().millisecondsSinceEpoch}-$i',
+          _lcsBulkSyncTask,
+          inputData: {'isAdmin': isAdmin, 'cnList': batch},
+          constraints: Constraints(networkType: NetworkType.connected),
+          existingWorkPolicy: ExistingWorkPolicy.keep,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
