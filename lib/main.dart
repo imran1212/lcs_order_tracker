@@ -1136,10 +1136,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _searchController = TextEditingController();
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
 
+  Future<void> _backfillCnRegistry() async {
+    final db = FirebaseFirestore.instance;
+    final migrationRef = db.collection('appMeta').doc('cnRegistryBackfillV1');
+    try {
+      final migration = await migrationRef.get();
+      if (migration.data()?['completed'] == true) return;
+      final orders = await db.collection('orders').get();
+      final seen = <String>{};
+      for (final order in orders.docs) {
+        final data = order.data();
+        final cn = (data['cn'] ?? '').toString().trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+        if (cn.isEmpty || !seen.add(cn)) continue;
+        final registryRef = db.collection('cnRegistry').doc(base64Url.encode(utf8.encode(cn)).replaceAll('=', ''));
+        await db.runTransaction((transaction) async {
+          final existing = await transaction.get(registryRef);
+          if (!existing.exists) {
+            transaction.set(registryRef, {
+              'cn': cn,
+              'orderId': order.id,
+              'workerUid': (data['workerUid'] ?? '').toString(),
+              'createdBy': FirebaseAuth.instance.currentUser?.uid ?? 'migration',
+              'createdAt': FieldValue.serverTimestamp(),
+              'source': 'legacy_backfill',
+            });
+          }
+        });
+      }
+      await migrationRef.set({
+        'completed': true,
+        'completedAt': FieldValue.serverTimestamp(),
+        'ordersScanned': orders.size,
+      });
+    } catch (error) {
+      // Do not block dashboard access; a later admin session can retry migration.
+      debugPrint('CN registry backfill incomplete: $error');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _restoreBulkSyncJob();
+    if (isAdmin) unawaited(_backfillCnRegistry());
     final orders = isAdmin
         ? FirebaseFirestore.instance
             .collection('orders')
@@ -4476,36 +4515,36 @@ Future<void> _loadWorkerName() async {
         for (var i = 0; i < valid.length; i++) {
           final draft = valid[i];
           final ref = orderRefs[i];
-        final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = _normalizeCn((draft['cn'] ?? '').toString());
-        transaction.set(ref, {
-          'customer': (draft['customer'] ?? '').toString().trim(),
-          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
-          'cn': cn,
-          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
-          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
-          'status': 'Pending API Sync',
-          'destination': (draft['destination'] ?? '').toString().trim(),
-          'workerName': workerController.text.trim(),
-          'workerUid': widget.workerUid,
-          'bookingDate': Timestamp.fromDate(date),
-          'statusDate': null,
-          'deliveryDate': null,
-          'receiptUrls': <String>[],
-          'receiptCount': 1,
-          'receiptUploadStatus': 'temporary_only',
-          'receiptImageName': (draft['imagePath'] ?? '').toString(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        transaction.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
-          'cn': cn,
-          'previousStatus': '',
-          'status': 'Pending API Sync',
-          'source': 'bulk_receipt_import',
-          'activityDate': Timestamp.fromDate(date),
-          'recordedAt': FieldValue.serverTimestamp(),
-        });
+          final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
+          final cn = _normalizeCn((draft['cn'] ?? '').toString());
+          transaction.set(ref, {
+            'customer': (draft['customer'] ?? '').toString().trim(),
+            'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
+            'cn': cn,
+            'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
+            'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
+            'status': 'Pending API Sync',
+            'destination': (draft['destination'] ?? '').toString().trim(),
+            'workerName': workerController.text.trim(),
+            'workerUid': widget.workerUid,
+            'bookingDate': Timestamp.fromDate(date),
+            'statusDate': null,
+            'deliveryDate': null,
+            'receiptUrls': <String>[],
+            'receiptCount': 1,
+            'receiptUploadStatus': 'temporary_only',
+            'receiptImageName': (draft['imagePath'] ?? '').toString(),
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          transaction.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
+            'cn': cn,
+            'previousStatus': '',
+            'status': 'Pending API Sync',
+            'source': 'bulk_receipt_import',
+            'activityDate': Timestamp.fromDate(date),
+            'recordedAt': FieldValue.serverTimestamp(),
+          });
           transaction.set(registryRefs[i], {
             'cn': normalizedCns[i],
             'orderId': ref.id,
@@ -4598,19 +4637,7 @@ Future<void> _loadWorkerName() async {
         });
       });
 
-      // LCS_STATUS_HISTORY_V1: initial status is committed with the order.
-      /*
-      await orderRef.collection('lcsStatusHistory')
-          .doc('order_created_pending')
-          .set({
-        'cn': cnController.text.trim(),
-        'previousStatus': '',
-        'status': 'Pending API Sync',
-        'source': 'order_created',
-        'activityDate': Timestamp.fromDate(finalBookingDate),
-        'recordedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      */
+      // Initial status history was committed atomically with the order.
 
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
