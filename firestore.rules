@@ -68,7 +68,7 @@ service cloud.firestore {
         // Keep tracking history append-only for audit integrity.
         allow create: if activeUser() &&
           (isAdmin() ||
-            ownsOrderData(get(/databases/$(database)/documents/orders/$(orderId)).data));
+            ownsOrderData(getAfter(/databases/$(database)/documents/orders/$(orderId)).data));
         allow update, delete: if isAdmin();
       }
     }
