@@ -38,6 +38,15 @@ void lcsBackgroundCallbackDispatcher() {
 
       final isBulk = task == _lcsBulkSyncTask;
       final isAdmin = inputData?['isAdmin'] == true;
+      final jobId = (inputData?['jobId'] ?? '').toString().trim();
+      final jobRef = jobId.isEmpty ? null : FirebaseFirestore.instance.collection('syncJobs').doc(jobId);
+      if (isBulk && jobRef != null) {
+        await jobRef.set({
+          'status': 'running',
+          'startedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
       final byCn = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
       if (isBulk) {
         final cnList = (inputData?['cnList'] as List?)?.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toSet() ?? <String>{};
@@ -70,6 +79,8 @@ void lcsBackgroundCallbackDispatcher() {
 
       for (final entry in byCn.entries) {
         final cn = entry.value.first.data()['cn'].toString().trim();
+        var cnSucceeded = false;
+        String? cnError;
         try {
           final result = await LcsApiService.syncCn(cn);
           for (final doc in entry.value) {
@@ -97,8 +108,14 @@ void lcsBackgroundCallbackDispatcher() {
               }, SetOptions(merge: true));
             }
           }
+          cnSucceeded = true;
         } catch (error) {
+          cnError = error.toString();
           debugPrint('LCS background sync failed for $cn: $error');
+        } finally {
+          if (isBulk && jobId.isNotEmpty) {
+            await _recordBulkSyncProgress(jobId, cn, cnSucceeded, cnError);
+          }
         }
       }
       // Bulk sync runs as a separate OS-managed one-off task. The OS may stop
@@ -108,6 +125,39 @@ void lcsBackgroundCallbackDispatcher() {
       debugPrint('LCS background sync task failed: $error');
       return false;
     }
+  });
+}
+
+
+Future<void> _recordBulkSyncProgress(String jobId, String cn, bool succeeded, String? error) async {
+  final db = FirebaseFirestore.instance;
+  final jobRef = db.collection('syncJobs').doc(jobId);
+  final itemId = cn.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9_-]'), '_');
+  final itemRef = jobRef.collection('items').doc(itemId);
+  await db.runTransaction((transaction) async {
+    final itemSnapshot = await transaction.get(itemRef);
+    if (!itemSnapshot.exists || (itemSnapshot.data()?['status'] ?? 'pending') != 'pending') return;
+    final jobSnapshot = await transaction.get(jobRef);
+    if (!jobSnapshot.exists) return;
+    final job = jobSnapshot.data() ?? <String, dynamic>{};
+    final completed = (job['completed'] as num?)?.toInt() ?? 0;
+    final total = (job['total'] as num?)?.toInt() ?? 0;
+    final successful = (job['successful'] as num?)?.toInt() ?? 0;
+    final failed = (job['failed'] as num?)?.toInt() ?? 0;
+    final nextCompleted = completed + 1;
+    transaction.update(itemRef, {
+      'status': succeeded ? 'success' : 'failed',
+      'error': succeeded ? null : (error ?? 'Unknown error'),
+      'completedAt': FieldValue.serverTimestamp(),
+    });
+    transaction.update(jobRef, {
+      'completed': nextCompleted,
+      'successful': successful + (succeeded ? 1 : 0),
+      'failed': failed + (succeeded ? 0 : 1),
+      'status': nextCompleted >= total ? 'completed' : 'running',
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (nextCompleted >= total) 'finishedAt': FieldValue.serverTimestamp(),
+    });
   });
 }
 
@@ -1030,6 +1080,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _bulkSyncingOrders = false;
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
+  String? _bulkSyncJobId;
   bool _showAllStationDelayedOrders = false;
   int _bottomNavIndex = 0;
   final ScrollController _dashboardScrollController = ScrollController();
@@ -1041,6 +1092,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _restoreBulkSyncJob();
     final orders = isAdmin
         ? FirebaseFirestore.instance
             .collection('orders')
@@ -1087,6 +1139,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  Future<void> _restoreBulkSyncJob() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedId = prefs.getString('lcs_latest_bulk_sync_job');
+    if (savedId == null || savedId.isEmpty || !mounted) return;
+    setState(() => _bulkSyncJobId = savedId);
+  }
+
   @override
   void dispose() {
     _statusNotificationSubscription?.cancel();
@@ -1129,13 +1188,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    final jobId = 'bulk_${workerUid}_${DateTime.now().millisecondsSinceEpoch}';
+    final jobRef = FirebaseFirestore.instance.collection('syncJobs').doc(jobId);
+    final prefs = await SharedPreferences.getInstance();
     setState(() {
       _bulkSyncingOrders = true;
       _bulkSyncCompleted = 0;
       _bulkSyncTotal = targets.length;
+      _bulkSyncJobId = jobId;
     });
+    await prefs.setString('lcs_latest_bulk_sync_job', jobId);
     try {
       final cnList = targets.map((entry) => entry.value.first.cn.trim()).toList();
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(jobRef, {
+        'jobId': jobId,
+        'ownerUid': workerUid,
+        'isAdmin': isAdmin,
+        'status': 'queued',
+        'total': cnList.length,
+        'completed': 0,
+        'successful': 0,
+        'failed': 0,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      for (final cn in cnList) {
+        final itemId = cn.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9_-]'), '_');
+        batch.set(jobRef.collection('items').doc(itemId), {
+          'cn': cn,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
       // Small independent OS-managed jobs keep each execution bounded and allow
       // Android to retry a batch when connectivity returns.
       for (var i = 0; i < cnList.length; i += 10) {
@@ -1143,7 +1229,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await Workmanager().registerOneOffTask(
           'lcs-bulk-sync-${DateTime.now().millisecondsSinceEpoch}-$i',
           _lcsBulkSyncTask,
-          inputData: {'isAdmin': isAdmin, 'cnList': batch},
+          inputData: {'isAdmin': isAdmin, 'cnList': batch, 'jobId': jobId},
           constraints: Constraints(networkType: NetworkType.connected),
           existingWorkPolicy: ExistingWorkPolicy.keep,
         );
@@ -1155,9 +1241,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           duration: const Duration(seconds: 6),
         ),
       );
-      // The OS-managed task continues independently of this screen. Refresh the
-      // live Firestore stream when the user returns to see updated statuses.
-      setState(() => _bulkSyncingOrders = false);
+      // Keep the button disabled and show saved Firestore progress until done.
+      setState(() => _bulkSyncingOrders = true);
     } catch (error) {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
@@ -1578,9 +1663,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     label: Text(_bulkSyncingOrders
                         ? 'Syncing $_bulkSyncCompleted/$_bulkSyncTotal orders...'
                         : 'Sync All Orders (Except Delivered)'),
-                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF8AA99A), padding: const EdgeInsets.symmetric(vertical: 15)),
                   ),
                 ),
+                if (_bulkSyncJobId != null)
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance.collection('syncJobs').doc(_bulkSyncJobId).snapshots(),
+                    builder: (context, jobSnapshot) {
+                      final job = jobSnapshot.data?.data();
+                      if (job == null) return const SizedBox.shrink();
+                      final total = (job['total'] as num?)?.toInt() ?? 0;
+                      final completed = (job['completed'] as num?)?.toInt() ?? 0;
+                      final successful = (job['successful'] as num?)?.toInt() ?? 0;
+                      final failed = (job['failed'] as num?)?.toInt() ?? 0;
+                      final status = (job['status'] ?? 'queued').toString();
+                      final active = status == 'queued' || status == 'running';
+                      if (mounted && _bulkSyncingOrders != active) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() => _bulkSyncingOrders = active);
+                        });
+                      }
+                      if (mounted && (_bulkSyncCompleted != completed || _bulkSyncTotal != total)) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() {
+                            _bulkSyncCompleted = completed;
+                            _bulkSyncTotal = total;
+                          });
+                        });
+                      }
+                      final percent = total == 0 ? 0.0 : (completed / total).clamp(0.0, 1.0);
+                      return Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(top: 10),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: status == 'completed' ? const Color(0xFFE8F7EE) : const Color(0xFFEAF2FF),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: status == 'completed' ? const Color(0xFF86D3A5) : const Color(0xFFB7D4FC)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(status == 'completed' ? Icons.check_circle_rounded : Icons.sync_rounded,
+                                  color: status == 'completed' ? const Color(0xFF087A46) : const Color(0xFF1769E0)),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(
+                                  status == 'completed' ? 'Background Sync Complete' : 'Background Sync ${status == 'queued' ? 'Queued' : 'Running'}',
+                                  style: const TextStyle(fontWeight: FontWeight.w900),
+                                )),
+                                Text('$completed/$total', style: const TextStyle(fontWeight: FontWeight.w900)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(value: percent, minHeight: 8),
+                            ),
+                            const SizedBox(height: 8),
+                            Text('$successful successful • $failed failed • ${(total - completed).clamp(0, total)} pending',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                            if (status == 'completed')
+                              const Padding(
+                                padding: EdgeInsets.only(top: 5),
+                                child: Text('Completed status counts actual CN processing; failed CNs are listed in sync job records.',
+                                  style: TextStyle(fontSize: 11, color: Color(0xFF166534))),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
 
                 if (isAdmin) ...[
                   const SizedBox(height: 14),
