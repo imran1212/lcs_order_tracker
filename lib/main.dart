@@ -1150,7 +1150,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       for (final order in orders.docs) {
         final data = order.data();
         final cn = _normalizeLcsCn((data['cn'] ?? '').toString());
-        if (!RegExp(r'^[A-Z0-9._-]{1,100}
+        if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) continue;
+        if (!seen.add(cn)) continue;
         final registryRef = db.collection('cnRegistry').doc(cn);
         await db.runTransaction((transaction) async {
           final existing = await transaction.get(registryRef);
@@ -3550,9 +3551,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         final orderSnapshot = await transaction.get(orderRef);
         if (!orderSnapshot.exists) return;
         final orderData = orderSnapshot.data() ?? <String, dynamic>{};
-        final cn = _normalizeCn((orderData['cn'] ?? '').toString());
+        final cn = _normalizeLcsCn((orderData['cn'] ?? '').toString());
         if (cn.isNotEmpty) {
-          final registryRef = _cnRegistryRef(cn);
+          final registryRef = db.collection('cnRegistry').doc(cn);
           final registrySnapshot = await transaction.get(registryRef);
           if (registrySnapshot.exists && registrySnapshot.data()?['orderId'] == widget.orderId) {
             transaction.delete(registryRef);
@@ -4479,7 +4480,16 @@ Future<void> _loadWorkerName() async {
     final normalizedCns = valid
         .map((draft) => _normalizeCn((draft['cn'] ?? '').toString()))
         .toList();
-    final invalidCns = normalizedCns.where((cn) => !RegExp(r'^[A-Z0-9._-]{1,100}
+    final invalidCns = normalizedCns
+        .where((cn) => !RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn))
+        .toList();
+    if (invalidCns.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Invalid CN format: ${invalidCns.join(', ')}')),
+      );
+      return;
+    }
+    final seenCns = <String>{};
     final repeatedInBatch = normalizedCns.where((cn) => !seenCns.add(cn)).toSet();
     if (repeatedInBatch.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4586,7 +4596,13 @@ Future<void> _loadWorkerName() async {
 
     try {
       final cn = _normalizeCn(cnController.text);
-      if (!RegExp(r'^[A-Z0-9._-]{1,100}
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CN format invalid hai. Sirf letters, numbers, dot, underscore aur hyphen allowed hain.')),
+        );
+        return;
+      }
+      final existingCns = await _findExistingCnNumbers([cn]);
       if (existingCns.isNotEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
