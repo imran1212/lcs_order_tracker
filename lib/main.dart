@@ -4386,7 +4386,7 @@ Future<void> _loadWorkerName() async {
   }
 
   String _normalizeCn(String value) =>
-      value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+      value.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
 
   Future<List<String>> _findExistingCnNumbers(Iterable<String> values) async {
     final currentUser = FirebaseAuth.instance.currentUser;
