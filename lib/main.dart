@@ -20,6 +20,12 @@ const String _lcsBulkSyncTask = 'lcsOrderBulkSync';
 void lcsBackgroundCallbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     if (task != _lcsBackgroundSyncTask && task != _lcsBulkSyncTask) return true;
+    final isBulkTask = task == _lcsBulkSyncTask;
+    final initialJobId = (inputData?['jobId'] ?? '').toString().trim();
+    final initialJobRef = initialJobId.isEmpty
+        ? null
+        : FirebaseFirestore.instance.collection('syncJobs').doc(initialJobId);
+    var stage = 'initialize_firebase';
     try {
       await Firebase.initializeApp();
       final auth = FirebaseAuth.instance;
@@ -36,22 +42,33 @@ void lcsBackgroundCallbackDispatcher() {
         return false;
       }
 
-      final isBulk = task == _lcsBulkSyncTask;
+      final isBulk = isBulkTask;
       final isAdmin = inputData?['isAdmin'] == true;
-      final jobId = (inputData?['jobId'] ?? '').toString().trim();
-      final jobRef = jobId.isEmpty ? null : FirebaseFirestore.instance.collection('syncJobs').doc(jobId);
+      final jobId = initialJobId;
+      final jobRef = initialJobRef;
       if (isBulk && jobRef != null) {
+        stage = 'mark_job_running';
         await jobRef.set({
           'status': 'running',
+          'stage': stage,
           'startedAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
       final byCn = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
       if (isBulk) {
+        stage = 'query_orders';
+        if (jobRef != null) {
+          await jobRef.set({'stage': stage, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+        }
         final cnList = (inputData?['cnList'] as List?)?.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toSet() ?? <String>{};
         for (final requestedCn in cnList) {
-          final matches = await FirebaseFirestore.instance.collection('orders').where('cn', isEqualTo: requestedCn).get();
+          // Firestore rules are not filters: worker queries must include workerUid.
+          Query<Map<String, dynamic>> orderQuery = FirebaseFirestore.instance.collection('orders').where('cn', isEqualTo: requestedCn);
+          if (!isAdmin) {
+            orderQuery = orderQuery.where('workerUid', isEqualTo: user.uid);
+          }
+          final matches = await orderQuery.get();
           for (final doc in matches.docs) {
             if (!isAdmin && (doc.data()['workerUid'] ?? '').toString() != user.uid) continue;
             final status = (doc.data()['status'] ?? '').toString().trim().toLowerCase();
@@ -77,6 +94,15 @@ void lcsBackgroundCallbackDispatcher() {
         }
       }
 
+      if (isBulk && jobRef != null) {
+        stage = 'syncing_cn';
+        await jobRef.set({
+          'stage': stage,
+          'matchedOrders': byCn.values.fold<int>(0, (sum, docs) => sum + docs.length),
+          'matchedTrackingNumbers': byCn.length,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
       for (final entry in byCn.entries) {
         final cn = entry.value.first.data()['cn'].toString().trim();
         var cnSucceeded = false;
@@ -122,7 +148,19 @@ void lcsBackgroundCallbackDispatcher() {
       // a long task; users can safely tap Sync All again to retry remaining work.
       return true;
     } catch (error) {
-      debugPrint('LCS background sync task failed: $error');
+      debugPrint('LCS background sync task failed at $stage: $error');
+      if (isBulkTask && initialJobRef != null) {
+        try {
+          await initialJobRef.set({
+            'status': 'error',
+            'stage': stage,
+            'lastError': error.toString(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (writeError) {
+          debugPrint('Could not save bulk sync error state: $writeError');
+        }
+      }
       return false;
     }
   });
