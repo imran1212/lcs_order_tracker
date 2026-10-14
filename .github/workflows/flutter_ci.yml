@@ -62,6 +62,12 @@ jobs:
       - name: Validate Firebase rules config
         run: node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('firebase.json','utf8')); if(!c.firestore || c.firestore.rules !== 'firestore.rules') process.exit(1)"
 
+      - name: Set up Java 21 for Firebase emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Compile Firestore security rules in emulator
         run: npx --yes firebase-tools emulators:exec --only firestore --project demo-lcs-tracker "echo Firestore rules compiled"
 
