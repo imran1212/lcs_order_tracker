@@ -77,12 +77,13 @@ test('worker cannot read another worker order or query outside assignment', asyn
   )));
 });
 
-test('worker cannot list user profiles or reassign own order to another worker', async () => {
+test('worker cannot list user profiles, reassign, or delete an order', async () => {
   const db = testEnv.authenticatedContext('worker-a').firestore();
   await assertFails(getDocs(collection(db, 'users')));
   await assertFails(updateDoc(doc(db, 'orders/order-a'), {
     workerUid: 'worker-b',
   }));
+  await assertFails(deleteDoc(doc(db, 'orders/order-a')));
 });
 
 test('admin can read organization orders and list worker profiles', async () => {
