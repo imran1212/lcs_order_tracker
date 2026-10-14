@@ -68,8 +68,11 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Compile Firestore security rules in emulator
-        run: npx --yes firebase-tools emulators:exec --only firestore --project demo-lcs-tracker "echo Firestore rules compiled"
+      - name: Install Firestore rules test dependencies
+        run: npm install --prefix security-tests --no-audit --no-fund
+
+      - name: Test Firestore security rules in emulator
+        run: npx --yes firebase-tools emulators:exec --only firestore --project demo-lcs-tracker "node --test security-tests/firestore.rules.test.mjs"
 
       - name: Resolve dependencies
         run: flutter pub get
