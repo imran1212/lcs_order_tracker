@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - feature/background-sync-v1.0.5
+      - feature/lcs-v1.0.8-reports-export
     paths:
       - "lib/**"
       - "test/**"
@@ -42,10 +44,14 @@ jobs:
       - name: Build release APK for device testing
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
+      - name: Rename APK with version and update title
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk "LCS Tracker By AQAS V.1.0.8 (Backup + CSV Export + Advanced Reports).apk"
+
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-arm64-near-final-test-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: LCS-Tracker-By-AQAS-V1.0.8-Backup-CSV-Advanced-Reports
+          path: "LCS Tracker By AQAS V.1.0.8 (Backup + CSV Export + Advanced Reports).apk"
           if-no-files-found: error
           retention-days: 7

@@ -11,16 +11,25 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
-// LCS_BACKGROUND_AUTO_SYNC_V1
+// LCS_BACKGROUND_AUTO_SYNC_V2
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
+const String _lcsBulkSyncTask = 'lcsOrderBulkSync';
 
 @pragma('vm:entry-point')
 void lcsBackgroundCallbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
-    if (task != _lcsBackgroundSyncTask) return true;
+    if (task != _lcsBackgroundSyncTask && task != _lcsBulkSyncTask) return true;
+    final isBulkTask = task == _lcsBulkSyncTask;
+    final initialJobId = (inputData?['jobId'] ?? '').toString().trim();
+    DocumentReference<Map<String, dynamic>>? initialJobRef;
+    var stage = 'initialize_firebase';
     try {
       await Firebase.initializeApp();
+      initialJobRef = initialJobId.isEmpty
+          ? null
+          : FirebaseFirestore.instance.collection('syncJobs').doc(initialJobId);
       final auth = FirebaseAuth.instance;
       var user = auth.currentUser;
       if (user == null) {
@@ -32,63 +41,163 @@ void lcsBackgroundCallbackDispatcher() {
       }
       if (user == null) {
         debugPrint('LCS background sync skipped: no signed-in user.');
-        return true;
+        return false;
       }
 
-      final query = await FirebaseFirestore.instance
-          .collection('orders')
-          .where('workerUid', isEqualTo: user.uid)
-          .limit(10)
-          .get();
-      for (final doc in query.docs) {
-        final data = doc.data();
-        final cn = (data['cn'] ?? '').toString().trim();
-        if (cn.isEmpty) continue;
-        final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
-        final isDelivered = (currentStatus.contains('delivered') &&
-                !currentStatus.contains('undelivered')) ||
-            currentStatus == 'delivery completed';
-        if (isDelivered) continue;
-        final lastSyncRaw = data['lastApiSyncAt'];
-        if (lastSyncRaw is Timestamp &&
-            DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
-          continue;
+      final isBulk = isBulkTask;
+      final isAdmin = inputData?['isAdmin'] == true;
+      final jobId = initialJobId;
+      final jobRef = initialJobRef;
+      if (isBulk && jobRef != null) {
+        stage = 'mark_job_running';
+        await jobRef.set({
+          'status': 'running',
+          'stage': stage,
+          'startedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+      final byCn = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+      if (isBulk) {
+        stage = 'query_orders';
+        if (jobRef != null) {
+          await jobRef.set({'stage': stage, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
         }
-        try {
-          final previousStatus = (data['status'] ?? 'Pending API Sync').toString().trim();
-          final result = await LcsApiService.syncCn(cn);
-          await doc.reference.update({
-            'status': result.status,
-            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-            'lastApiSyncAt': FieldValue.serverTimestamp(),
-            'lcsRawStatus': result.status,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          if (previousStatus != result.status.trim()) {
-            final dateKey = (result.statusDate ?? DateTime.now()).toUtc().toIso8601String()
-                .replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
-            final eventId = 'background_${result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_$dateKey';
-            await doc.reference.collection('lcsStatusHistory').doc(eventId).set({
-              'cn': cn,
-              'previousStatus': previousStatus,
-              'status': result.status.trim(),
-              'source': 'background_auto_sync',
-              'activityDate': result.statusDate == null
-                  ? Timestamp.now()
-                  : Timestamp.fromDate(result.statusDate!),
-              'recordedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
+        final cnList = (inputData?['cnList'] as List?)?.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toSet() ?? <String>{};
+        for (final requestedCn in cnList) {
+          // Firestore rules are not filters: worker queries must include workerUid.
+          Query<Map<String, dynamic>> orderQuery = FirebaseFirestore.instance.collection('orders').where('cn', isEqualTo: requestedCn);
+          if (!isAdmin) {
+            orderQuery = orderQuery.where('workerUid', isEqualTo: user.uid);
           }
-        } catch (error) {
-          debugPrint('LCS background sync failed for order ${doc.id}: $error');
+          final matches = await orderQuery.get();
+          for (final doc in matches.docs) {
+            if (!isAdmin && (doc.data()['workerUid'] ?? '').toString() != user.uid) continue;
+            final status = (doc.data()['status'] ?? '').toString().trim().toLowerCase();
+            final delivered = (status.contains('delivered') && !status.contains('undelivered')) ||
+                status == 'delivery completed';
+            if (delivered) continue;
+            (byCn[requestedCn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
+          }
+        }
+      } else {
+        Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('orders').where('workerUid', isEqualTo: user.uid);
+        final snapshot = await query.limit(10).get();
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final cn = (data['cn'] ?? '').toString().trim();
+          if (cn.isEmpty) continue;
+          final status = (data['status'] ?? '').toString().trim().toLowerCase();
+          final delivered = (status.contains('delivered') && !status.contains('undelivered')) || status == 'delivery completed';
+          if (delivered) continue;
+          final lastSyncRaw = data['lastApiSyncAt'];
+          if (lastSyncRaw is Timestamp && DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) continue;
+          (byCn[cn.toUpperCase()] ??= <QueryDocumentSnapshot<Map<String, dynamic>>>[]).add(doc);
         }
       }
+
+      if (isBulk && jobRef != null) {
+        stage = 'syncing_cn';
+        await jobRef.set({
+          'stage': stage,
+          'matchedOrders': byCn.values.fold<int>(0, (sum, docs) => sum + docs.length),
+          'matchedTrackingNumbers': byCn.length,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+      for (final entry in byCn.entries) {
+        final cn = entry.value.first.data()['cn'].toString().trim();
+        var cnSucceeded = false;
+        String? cnError;
+        try {
+          final result = await LcsApiService.syncCn(cn);
+          for (final doc in entry.value) {
+            final data = doc.data();
+            final previousStatus = (data['status'] ?? 'Pending API Sync').toString().trim();
+            await doc.reference.update({
+              'status': result.status,
+              'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+              'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+              'lastApiSyncAt': FieldValue.serverTimestamp(),
+              'lcsRawStatus': result.status,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            if (previousStatus != result.status.trim()) {
+              final dateKey = (result.statusDate ?? DateTime.now()).toUtc().toIso8601String()
+                  .replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+              final eventId = 'background_${result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_$dateKey';
+              await doc.reference.collection('lcsStatusHistory').doc(eventId).set({
+                'cn': cn,
+                'previousStatus': previousStatus,
+                'status': result.status.trim(),
+                'source': isBulk ? 'background_bulk_sync' : 'background_auto_sync',
+                'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
+                'recordedAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+            }
+          }
+          cnSucceeded = true;
+        } catch (error) {
+          cnError = error.toString();
+          debugPrint('LCS background sync failed for $cn: $error');
+        } finally {
+          if (isBulk && jobId.isNotEmpty) {
+            await _recordBulkSyncProgress(jobId, cn, cnSucceeded, cnError);
+          }
+        }
+      }
+      // Bulk sync runs as a separate OS-managed one-off task. The OS may stop
+      // a long task; users can safely tap Sync All again to retry remaining work.
       return true;
     } catch (error) {
-      debugPrint('LCS background sync task failed: $error');
+      debugPrint('LCS background sync task failed at $stage: $error');
+      if (isBulkTask && initialJobRef != null) {
+        try {
+          await initialJobRef.set({
+            'status': 'error',
+            'stage': stage,
+            'lastError': error.toString(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (writeError) {
+          debugPrint('Could not save bulk sync error state: $writeError');
+        }
+      }
       return false;
     }
+  });
+}
+
+
+Future<void> _recordBulkSyncProgress(String jobId, String cn, bool succeeded, String? error) async {
+  final db = FirebaseFirestore.instance;
+  final jobRef = db.collection('syncJobs').doc(jobId);
+  final itemId = cn.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9_-]'), '_');
+  final itemRef = jobRef.collection('items').doc(itemId);
+  await db.runTransaction((transaction) async {
+    final itemSnapshot = await transaction.get(itemRef);
+    if (!itemSnapshot.exists || (itemSnapshot.data()?['status'] ?? 'pending') != 'pending') return;
+    final jobSnapshot = await transaction.get(jobRef);
+    if (!jobSnapshot.exists) return;
+    final job = jobSnapshot.data() ?? <String, dynamic>{};
+    final completed = (job['completed'] as num?)?.toInt() ?? 0;
+    final total = (job['total'] as num?)?.toInt() ?? 0;
+    final successful = (job['successful'] as num?)?.toInt() ?? 0;
+    final failed = (job['failed'] as num?)?.toInt() ?? 0;
+    final nextCompleted = completed + 1;
+    transaction.update(itemRef, {
+      'status': succeeded ? 'success' : 'failed',
+      'error': succeeded ? null : (error ?? 'Unknown error'),
+      'completedAt': FieldValue.serverTimestamp(),
+    });
+    transaction.update(jobRef, {
+      'completed': nextCompleted,
+      'successful': successful + (succeeded ? 1 : 0),
+      'failed': failed + (succeeded ? 0 : 1),
+      'status': nextCompleted >= total ? 'completed' : 'running',
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (nextCompleted >= total) 'finishedAt': FieldValue.serverTimestamp(),
+    });
   });
 }
 
@@ -1011,6 +1120,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _bulkSyncingOrders = false;
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
+  String? _bulkSyncJobId;
+  int _reportPeriodMonths = 6;
+  String _reportDateBasis = 'Booking Date';
+  DateTime? _reportCustomFrom;
+  DateTime? _reportCustomTo;
+  String _reportCityFilter = 'All';
+  String _reportWorkerFilter = 'All';
+  String _reportStatusFilter = 'All';
   bool _showAllStationDelayedOrders = false;
   int _bottomNavIndex = 0;
   final ScrollController _dashboardScrollController = ScrollController();
@@ -1022,6 +1139,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _restoreBulkSyncJob();
     final orders = isAdmin
         ? FirebaseFirestore.instance
             .collection('orders')
@@ -1068,6 +1186,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  Future<void> _restoreBulkSyncJob() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedId = prefs.getString('lcs_latest_bulk_sync_job');
+    if (savedId == null || savedId.isEmpty || !mounted) return;
+    setState(() => _bulkSyncJobId = savedId);
+  }
+
   @override
   void dispose() {
     _statusNotificationSubscription?.cancel();
@@ -1089,63 +1214,88 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     final targets = targetsByCn.entries.toList();
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')),
+      );
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Sync all active tracking numbers?'),
-        content: Text('${targets.length} unique tracking number(s) sync honge. Delivered orders skip honge; duplicate CN ek hi dafa sync hoga.'),
+        content: Text(
+          '${targets.length} unique tracking number(s) background mein sync ke liye queue honge. '
+          'Delivered orders skip honge; duplicate CN ek hi dafa sync hoga. '
+          'App minimize kar sakte hain. Android ki battery/force-stop restrictions ki wajah se timing vary kar sakti hai.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Sync')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Background Sync')),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() { _bulkSyncingOrders = true; _bulkSyncCompleted = 0; _bulkSyncTotal = targets.length; });
-    var succeeded = 0;
-    var failed = 0;
+    final jobId = 'bulk_${workerUid}_${DateTime.now().millisecondsSinceEpoch}';
+    final jobRef = FirebaseFirestore.instance.collection('syncJobs').doc(jobId);
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _bulkSyncingOrders = true;
+      _bulkSyncCompleted = 0;
+      _bulkSyncTotal = targets.length;
+      _bulkSyncJobId = jobId;
+    });
+    await prefs.setString('lcs_latest_bulk_sync_job', jobId);
     try {
-      for (final entry in targets) {
-        if (!mounted) break;
-        final duplicateOrders = entry.value;
-        final cn = duplicateOrders.first.cn.trim();
-        try {
-          final result = await LcsApiService.syncCn(cn);
-          for (final order in duplicateOrders) {
-            final ref = FirebaseFirestore.instance.collection('orders').doc(order.id);
-            await ref.update({
-              'status': result.status,
-              'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-              'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-              'lastApiSyncAt': FieldValue.serverTimestamp(),
-              'lcsRawStatus': result.status,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            if (order.status.trim() != result.status.trim()) {
-              final statusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-              final timeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-              await ref.collection('lcsStatusHistory').doc('bulk_${statusKey}_${timeKey}').set({
-                'cn': order.cn, 'previousStatus': order.status.trim(), 'status': result.status.trim(),
-                'source': 'dashboard_bulk_sync',
-                'activityDate': result.statusDate == null ? Timestamp.now() : Timestamp.fromDate(result.statusDate!),
-                'recordedAt': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
-            }
-          }
-          succeeded++;
-        } catch (error) {
-          failed++;
-          debugPrint('Bulk LCS sync failed for ${cn}: ${error}');
-        }
-        if (mounted) setState(() => _bulkSyncCompleted++);
+      final cnList = targets.map((entry) => entry.value.first.cn.trim()).toList();
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(jobRef, {
+        'jobId': jobId,
+        'ownerUid': workerUid,
+        'isAdmin': isAdmin,
+        'status': 'queued',
+        'total': cnList.length,
+        'completed': 0,
+        'successful': 0,
+        'failed': 0,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      for (final cn in cnList) {
+        final itemId = cn.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9_-]'), '_');
+        batch.set(jobRef.collection('items').doc(itemId), {
+          'cn': cn,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
       }
-    } finally {
+      await batch.commit();
+      // Small independent OS-managed jobs keep each execution bounded and allow
+      // Android to retry a batch when connectivity returns.
+      for (var i = 0; i < cnList.length; i += 10) {
+        final batch = cnList.skip(i).take(10).toList();
+        await Workmanager().registerOneOffTask(
+          'lcs-bulk-sync-${DateTime.now().millisecondsSinceEpoch}-$i',
+          _lcsBulkSyncTask,
+          inputData: {'isAdmin': isAdmin, 'cnList': batch, 'jobId': jobId},
+          constraints: Constraints(networkType: NetworkType.connected),
+          existingWorkPolicy: ExistingWorkPolicy.keep,
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Background Sync All queue ho gayi: ${targets.length} unique CN. App minimize kar sakte hain.'),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      // Keep the button disabled and show saved Firestore progress until done.
+      setState(() => _bulkSyncingOrders = true);
+    } catch (error) {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('LCS sync complete: ${succeeded} tracking number(s) synced, ${failed} failed. Delivered orders skipped.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Background sync start nahi ho saki: $error')),
+        );
       }
     }
   }
@@ -1560,16 +1710,85 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     label: Text(_bulkSyncingOrders
                         ? 'Syncing $_bulkSyncCompleted/$_bulkSyncTotal orders...'
                         : 'Sync All Orders (Except Delivered)'),
-                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
+                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF8AA99A), padding: const EdgeInsets.symmetric(vertical: 15)),
                   ),
                 ),
-
-                if (isAdmin) ...[
-                  const SizedBox(height: 14),
-                  Container(key: _reportsSectionKey),
-                  _workerPerformanceReport(
-                    docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
+                if (_bulkSyncJobId != null)
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance.collection('syncJobs').doc(_bulkSyncJobId).snapshots(),
+                    builder: (context, jobSnapshot) {
+                      final job = jobSnapshot.data?.data();
+                      if (job == null) return const SizedBox.shrink();
+                      final total = (job['total'] as num?)?.toInt() ?? 0;
+                      final completed = (job['completed'] as num?)?.toInt() ?? 0;
+                      final successful = (job['successful'] as num?)?.toInt() ?? 0;
+                      final failed = (job['failed'] as num?)?.toInt() ?? 0;
+                      final status = (job['status'] ?? 'queued').toString();
+                      final active = status == 'queued' || status == 'running';
+                      if (mounted && _bulkSyncingOrders != active) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() => _bulkSyncingOrders = active);
+                        });
+                      }
+                      if (mounted && (_bulkSyncCompleted != completed || _bulkSyncTotal != total)) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) setState(() {
+                            _bulkSyncCompleted = completed;
+                            _bulkSyncTotal = total;
+                          });
+                        });
+                      }
+                      final percent = total == 0 ? 0.0 : (completed / total).clamp(0.0, 1.0);
+                      return Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(top: 10),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: status == 'completed' ? const Color(0xFFE8F7EE) : const Color(0xFFEAF2FF),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: status == 'completed' ? const Color(0xFF86D3A5) : const Color(0xFFB7D4FC)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(status == 'completed' ? Icons.check_circle_rounded : Icons.sync_rounded,
+                                  color: status == 'completed' ? const Color(0xFF087A46) : const Color(0xFF1769E0)),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(
+                                  status == 'completed' ? 'Background Sync Complete' : 'Background Sync ${status == 'queued' ? 'Queued' : 'Running'}',
+                                  style: const TextStyle(fontWeight: FontWeight.w900),
+                                )),
+                                Text('$completed/$total', style: const TextStyle(fontWeight: FontWeight.w900)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(value: percent, minHeight: 8),
+                            ),
+                            const SizedBox(height: 8),
+                            Text('$successful successful • $failed failed • ${(total - completed).clamp(0, total)} pending',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                            if (status == 'completed')
+                              const Padding(
+                                padding: EdgeInsets.only(top: 5),
+                                child: Text('Completed status counts actual CN processing; failed CNs are listed in sync job records.',
+                                  style: TextStyle(fontSize: 11, color: Color(0xFF166534))),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
+
+                const SizedBox(height: 14),
+                Container(key: _reportsSectionKey),
+                _advancedReports(docs.map((doc) => OrderData.fromFirestore(doc)).toList()),
+                if (isAdmin) ...[
+                  const SizedBox(height: 12),
+                  _workerPerformanceReport(docs.map((doc) => OrderData.fromFirestore(doc)).toList()),
                 ],
 
                 const SizedBox(height: 14),
@@ -2157,6 +2376,153 @@ class _DashboardScreenState extends State<DashboardScreen> {
         statusFilter != 'All' ||
         workerFilter != 'All' ||
         dateFilterType != 'Booking Date';
+  }
+
+
+  DateTime? _reportOrderDate(OrderData order) {
+    switch (_reportDateBasis) { case 'Status Date': return order.statusDate; case 'Delivery Date': return order.deliveryDate; default: return order.bookingDate; }
+  }
+  DateTime _reportStart() {
+    if (_reportCustomFrom != null) return _reportCustomFrom!;
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month - _reportPeriodMonths, 1);
+    final lastDay = DateTime(monthStart.year, monthStart.month + 1, 0).day;
+    return DateTime(monthStart.year, monthStart.month, now.day.clamp(1, lastDay).toInt());
+  }
+  String _reportPeriodLabel(int months) => months == 1 ? 'Last 1 month' : 'Last $months months';
+  DateTime _reportEnd() {
+    if (_reportCustomTo != null) return DateTime(_reportCustomTo!.year,_reportCustomTo!.month,_reportCustomTo!.day,23,59,59,999);
+    return DateTime.now();
+  }
+  List<OrderData> _ordersForReport(List<OrderData> allOrders) {
+    final start = _reportStart(), end = _reportEnd();
+    return allOrders.where((o) {
+      final d = _reportOrderDate(o);
+      if (d == null || d.isBefore(start) || d.isAfter(end)) return false;
+      final city = _reportCity(o.destination);
+      final worker = o.workerUid.trim().isEmpty ? 'unassigned' : o.workerUid.trim();
+      final status = o.status.trim().isEmpty ? 'Unknown' : o.status.trim();
+      return (_reportCityFilter == 'All' || city == _reportCityFilter)
+          && (_reportWorkerFilter == 'All' || worker == _reportWorkerFilter)
+          && (_reportStatusFilter == 'All' || status == _reportStatusFilter);
+    }).toList();
+  }
+  bool _reportIsDelivered(OrderData o) {final s=o.status.toLowerCase().trim();return s.contains('delivered')&&!s.contains('undeliver');}
+  bool _reportIsReturned(OrderData o)=>o.status.toLowerCase().trim().contains('return');
+  String _reportCity(String destination) {
+    final v = destination.trim();
+    if (v.isEmpty) return 'Unknown';
+    final parts = v.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return 'Unknown';
+    if (parts.length > 1 && const {'pakistan', 'pk'}.contains(parts.last.toLowerCase())) {
+      return parts[parts.length - 2];
+    }
+    return parts.last;
+  }
+  String _csvCell(Object? v)=>'"${(v??'').toString().replaceAll('"','""')}"';
+  String _reportDateText(DateTime? d) {if(d==null)return '';return '${d.year.toString().padLeft(4,'0')}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';}
+  Future<void> _exportReportCsv(List<OrderData> orders) async {
+    try {
+      final rows=<List<Object?>>[
+        <Object?>['CN','Booking Date','Status Date','Delivery Date','Customer','Phone','Product','Amount','City','Status','Worker','Worker UID'],
+        ...orders.map((o)=><Object?>[o.cn,_reportDateText(o.bookingDate),_reportDateText(o.statusDate),_reportDateText(o.deliveryDate),o.customer,o.customerPhone,o.product,o.amount,_reportCity(o.destination),o.status,o.workerName,o.workerUid]),
+      ];
+      final csv='\uFEFF${rows.map((r)=>r.map(_csvCell).join(',')).join('\r\n')}';
+      final dir=await Directory.systemTemp.createTemp('aqas_lcs_export_');
+      final file=File('${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Report.csv');
+      await file.writeAsString(csv,flush:true);
+      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • ${orders.length} orders • $_reportDateBasis • ${_reportDateText(_reportStart())} to ${_reportDateText(_reportEnd())}');
+    } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('CSV export nahi ho saka: $e')));}
+  }
+  Future<void> _exportJsonBackup(List<OrderData> orders) async {
+    try {
+      final payload=<String,dynamic>{
+        'app':'LCS Tracker By AQAS','version':'1.0.8+9','exportedAt':DateTime.now().toIso8601String(),'recordCount':orders.length,'dateBasis':_reportDateBasis,'from':_reportDateText(_reportStart()),'to':_reportDateText(_reportEnd()),
+        'orders':orders.map((o)=><String,dynamic>{'id':o.id,'cn':o.cn,'bookingDate':o.bookingDate?.toIso8601String(),'statusDate':o.statusDate?.toIso8601String(),'deliveryDate':o.deliveryDate?.toIso8601String(),'customer':o.customer,'customerPhone':o.customerPhone,'product':o.product,'amount':o.amount,'destination':o.destination,'status':o.status,'workerName':o.workerName,'workerUid':o.workerUid,'receiptUrls':o.receiptUrls}).toList(),
+      };
+      final dir=await Directory.systemTemp.createTemp('aqas_lcs_backup_');
+      final file=File('${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Backup.json');
+      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload),flush:true);
+      await Share.shareXFiles([XFile(file.path,mimeType:'application/json')],subject:'LCS Tracker By AQAS V.1.0.8 JSON Backup',text:'JSON backup • ${orders.length} orders. Keep this file in a safe place.');
+    } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('JSON backup export nahi ho saka: $e')));}
+  }
+  Future<void> _pickReportRange() async {
+    final now=DateTime.now();
+    final picked=await showDateRangePicker(context:context,firstDate:DateTime(now.year,now.month-6,1),lastDate:now,initialDateRange:DateTimeRange(start:_reportStart().isBefore(DateTime(now.year,now.month-6,1))?DateTime(now.year,now.month-6,1):_reportStart(),end:_reportEnd().isAfter(now)?now:_reportEnd()),helpText:'Choose report range (maximum 6 months)');
+    if(picked==null||!mounted)return;
+    if(picked.start.isBefore(DateTime(now.year,now.month-6,now.day))){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Reports mein maximum 6 months ka range select kar sakte hain.')));return;}
+    setState((){_reportCustomFrom=picked.start;_reportCustomTo=picked.end;});
+  }
+  Widget _reportMetric(String label,int value,Color color,IconData icon)=>Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:color.withOpacity(.09),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:22),const SizedBox(width:8),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('$value',style:TextStyle(fontSize:22,fontWeight:FontWeight.w900,color:color)),Text(label,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700))]))]));
+  Widget _reportBar(String label,int value,int maxValue,Color color) {final fraction=maxValue<=0?0.0:(value/maxValue).clamp(0.0,1.0).toDouble();return Padding(padding:const EdgeInsets.only(bottom:10),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700))),Text('$value',style:const TextStyle(fontSize:12,fontWeight:FontWeight.w900))]),const SizedBox(height:5),ClipRRect(borderRadius:BorderRadius.circular(8),child:LinearProgressIndicator(value:fraction,minHeight:8,backgroundColor:const Color(0xFFE5E7EB),color:color))]));}
+  Widget _advancedReports(List<OrderData> allOrders) {
+    final reportOrders=_ordersForReport(allOrders);final total=reportOrders.length;
+    final delivered=reportOrders.where(_reportIsDelivered).length,returned=reportOrders.where(_reportIsReturned).length;
+    final deliveryRate=total==0?0:(delivered*100/total).round(),returnRate=total==0?0:(returned*100/total).round();
+    final cities=<String,List<OrderData>>{},workers=<String,List<OrderData>>{};final statuses=<String,int>{};
+    for(final o in reportOrders){cities.putIfAbsent(_reportCity(o.destination),()=> <OrderData>[]).add(o);final key=o.workerUid.trim().isEmpty?'unassigned':o.workerUid.trim();workers.putIfAbsent(key,()=> <OrderData>[]).add(o);final s=o.status.trim().isEmpty?'Unknown':o.status.trim();statuses[s]=(statuses[s]??0)+1;}
+    final cityEntries=cities.entries.toList()..sort((a,b)=>b.value.length.compareTo(a.value.length));
+    final workerEntries=workers.entries.toList()..sort((a,b)=>b.value.length.compareTo(a.value.length));
+    final statusEntries=statuses.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
+    final maxCity=cityEntries.isEmpty?0:cityEntries.first.value.length,maxStatus=statusEntries.isEmpty?0:statusEntries.first.value;
+    final workerNames=<String,String>{};for(final o in reportOrders){final key=o.workerUid.trim().isEmpty?'unassigned':o.workerUid.trim();workerNames[key]=o.workerName.trim().isEmpty?(key=='unassigned'?'Unassigned':key):o.workerName.trim();}
+    final startLabel=_reportDateText(_reportStart()),endLabel=_reportDateText(_reportEnd());
+    final allCities = allOrders.map((o) => _reportCity(o.destination)).toSet().toList()..sort();
+    final allStatuses = allOrders.map((o) => o.status.trim().isEmpty ? 'Unknown' : o.status.trim()).toSet().toList()..sort();
+    final allWorkers = <String, String>{};
+    for (final o in allOrders) {
+      final uid = o.workerUid.trim().isEmpty ? 'unassigned' : o.workerUid.trim();
+      allWorkers[uid] = o.workerName.trim().isEmpty ? (uid == 'unassigned' ? 'Unassigned' : uid) : o.workerName.trim();
+    }
+    return Container(width:double.infinity,padding:const EdgeInsets.all(15),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(20),border:Border.all(color:const Color(0xFFDCE9E1)),boxShadow:const [BoxShadow(color:Color(0x0D087A46),blurRadius:14,offset:Offset(0,4))]),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Row(children:[Icon(Icons.query_stats_rounded,color:Color(0xFF087A46),size:24),SizedBox(width:8),Expanded(child:Text('AQAS Business Reports',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900)))]),
+      const SizedBox(height:5),Text('Date basis: $_reportDateBasis • $startLabel to $endLabel',style:const TextStyle(fontSize:11,color:Colors.blueGrey)),
+      const SizedBox(height:12),Wrap(spacing:7,runSpacing:7,children:[
+        for(final months in [1,3,6]) ChoiceChip(label:Text(_reportPeriodLabel(months)),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
+        OutlinedButton.icon(onPressed:_pickReportRange,icon:const Icon(Icons.date_range_rounded,size:18),label:const Text('Custom (6 months max)')),
+      ]),
+      const SizedBox(height:8),DropdownButtonFormField<String>(value:_reportDateBasis,isExpanded:true,decoration:const InputDecoration(labelText:'Report date basis',prefixIcon:Icon(Icons.event_available_rounded),border:OutlineInputBorder(),contentPadding:EdgeInsets.symmetric(horizontal:12,vertical:10)),items:const [DropdownMenuItem(value:'Booking Date',child:Text('Booking Date')),DropdownMenuItem(value:'Status Date',child:Text('Status Update Date')),DropdownMenuItem(value:'Delivery Date',child:Text('Delivery Date'))],onChanged:(v){if(v!=null)setState(()=>_reportDateBasis=v);}),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportCityFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'City filter', prefixIcon: Icon(Icons.location_city_rounded), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All cities')), ...allCities.map((city) => DropdownMenuItem(value: city, child: Text(city, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportCityFilter = v); },
+      ),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportWorkerFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'Worker filter', prefixIcon: Icon(Icons.badge_outlined), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All workers')), ...allWorkers.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportWorkerFilter = v); },
+      ),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportStatusFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'Status filter', prefixIcon: Icon(Icons.local_shipping_outlined), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All statuses')), ...allStatuses.map((s) => DropdownMenuItem(value: s, child: Text(s, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportStatusFilter = v); },
+      ),
+      const SizedBox(height:12),
+      if(total==0) const Padding(padding:EdgeInsets.symmetric(vertical:12),child:Text('Is date range/date basis ke liye orders nahi mile. Booking dates ya filters check karein.',style:TextStyle(color:Colors.blueGrey)))
+      else ...[
+        GridView.count(crossAxisCount:2,shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),childAspectRatio:2.15,mainAxisSpacing:9,crossAxisSpacing:9,children:[
+          _reportMetric('Total Orders',total,const Color(0xFF087A46),Icons.inventory_2_rounded),_reportMetric('Delivered • $deliveryRate%',delivered,const Color(0xFF16834A),Icons.check_circle_rounded),_reportMetric('Returned • $returnRate%',returned,const Color(0xFFC2415D),Icons.assignment_return_rounded),_reportMetric('Other / Active',total-delivered-returned,const Color(0xFF1769E0),Icons.local_shipping_rounded),
+        ]),
+        const SizedBox(height:16),const Text('Top Cities by Order Volume',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...cityEntries.take(10).map((e)=>_reportBar(e.key,e.value.length,maxCity,const Color(0xFF087A46))),
+        const SizedBox(height:8),const Text('Status Breakdown',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...statusEntries.take(8).map((e)=>_reportBar(e.key,e.value,maxStatus,const Color(0xFF1769E0))),
+        const SizedBox(height:8),const Text('Worker Performance',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),
+        ...workerEntries.take(10).map((e){final items=e.value,d=items.where(_reportIsDelivered).length,r=items.where(_reportIsReturned).length,rate=items.isEmpty?0:(d*100/items.length).round(),name=workerNames[e.key]??e.key;return Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(name,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.w800))),Text('${items.length} orders',style:const TextStyle(fontSize:11,fontWeight:FontWeight.w800))]),const SizedBox(height:5),Text('Delivered $d • Returned $r • Delivery rate $rate%',style:const TextStyle(fontSize:11,color:Colors.blueGrey))]));}),
+      ],
+      const Divider(height:24),Wrap(spacing:8,runSpacing:8,children:[
+        FilledButton.icon(onPressed:reportOrders.isEmpty?null:()=>_exportReportCsv(reportOrders),icon:const Icon(Icons.file_download_outlined),label:const Text('Export CSV'),style:FilledButton.styleFrom(backgroundColor:const Color(0xFF087A46),foregroundColor:Colors.white)),
+        OutlinedButton.icon(onPressed:reportOrders.isEmpty?null:()=>_exportJsonBackup(reportOrders),icon:const Icon(Icons.backup_outlined),label:const Text('JSON Backup')),
+      ]),
+      const SizedBox(height:4),const Text('Exports include matching orders for selected period/date basis. JSON export is a backup file, not a one-tap restore.',style:TextStyle(fontSize:10,color:Colors.blueGrey)),
+    ]));
   }
 
   // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
