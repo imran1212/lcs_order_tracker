@@ -131,3 +131,15 @@ test('unauthenticated clients cannot read orders', async () => {
   const db = testEnv.unauthenticatedContext().firestore();
   await assertFails(getDoc(doc(db, 'orders/order-a')));
 });
+
+test('CN registry allows one owner reservation and blocks a duplicate reservation', async () => {
+  const workerA = testEnv.authenticatedContext('worker-a').firestore();
+  const workerB = testEnv.authenticatedContext('worker-b').firestore();
+  await assertSucceeds(setDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), {
+    cn: 'QL1234', orderId: 'order-registry-a', workerUid: 'worker-a', createdBy: 'worker-a',
+  }));
+  await assertFails(setDoc(doc(workerB, 'cnRegistry/Q04xMjM0'), {
+    cn: 'QL1234', orderId: 'order-registry-b', workerUid: 'worker-b', createdBy: 'worker-b',
+  }));
+  await assertFails(updateDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), { orderId: 'tampered' }));
+});
