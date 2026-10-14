@@ -22,12 +22,13 @@ void lcsBackgroundCallbackDispatcher() {
     if (task != _lcsBackgroundSyncTask && task != _lcsBulkSyncTask) return true;
     final isBulkTask = task == _lcsBulkSyncTask;
     final initialJobId = (inputData?['jobId'] ?? '').toString().trim();
-    final initialJobRef = initialJobId.isEmpty
-        ? null
-        : FirebaseFirestore.instance.collection('syncJobs').doc(initialJobId);
+    DocumentReference<Map<String, dynamic>>? initialJobRef;
     var stage = 'initialize_firebase';
     try {
       await Firebase.initializeApp();
+      initialJobRef = initialJobId.isEmpty
+          ? null
+          : FirebaseFirestore.instance.collection('syncJobs').doc(initialJobId);
       final auth = FirebaseAuth.instance;
       var user = auth.currentUser;
       if (user == null) {
