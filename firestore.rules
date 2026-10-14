@@ -106,6 +106,13 @@ service cloud.firestore {
       }
     }
 
+    match /appMeta/{metaId} {
+      allow get: if isAdmin();
+      allow list: if false;
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
     // A CN can be reserved only once; clients cannot overwrite reservations.
     match /cnRegistry/{cnKey} {
       allow get: if activeUser();
