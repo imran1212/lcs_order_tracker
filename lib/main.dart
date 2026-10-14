@@ -2384,8 +2384,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
   DateTime _reportStart() {
     if (_reportCustomFrom != null) return _reportCustomFrom!;
-    final now = DateTime.now(); return DateTime(now.year, now.month - _reportPeriodMonths, now.day);
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month - _reportPeriodMonths, 1);
+    final lastDay = DateTime(monthStart.year, monthStart.month + 1, 0).day;
+    return DateTime(monthStart.year, monthStart.month, now.day.clamp(1, lastDay));
   }
+  String _reportPeriodLabel(int months) => months == 1 ? 'Last 1 month' : 'Last $months months';
   DateTime _reportEnd() {
     if (_reportCustomTo != null) return DateTime(_reportCustomTo!.year,_reportCustomTo!.month,_reportCustomTo!.day,23,59,59,999);
     return DateTime.now();
@@ -2474,7 +2478,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const Row(children:[Icon(Icons.query_stats_rounded,color:Color(0xFF087A46),size:24),SizedBox(width:8),Expanded(child:Text('AQAS Business Reports',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900)))]),
       const SizedBox(height:5),Text('Date basis: $_reportDateBasis • $startLabel to $endLabel',style:const TextStyle(fontSize:11,color:Colors.blueGrey)),
       const SizedBox(height:12),Wrap(spacing:7,runSpacing:7,children:[
-        for(final months in [1,3,6]) ChoiceChip(label:Text('Last $months month${months==1?'':'s'}'),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
+        for(final months in [1,3,6]) ChoiceChip(label:Text(_reportPeriodLabel(months)),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
         OutlinedButton.icon(onPressed:_pickReportRange,icon:const Icon(Icons.date_range_rounded,size:18),label:const Text('Custom (6 months max)')),
       ]),
       const SizedBox(height:8),DropdownButtonFormField<String>(value:_reportDateBasis,isExpanded:true,decoration:const InputDecoration(labelText:'Report date basis',prefixIcon:Icon(Icons.event_available_rounded),border:OutlineInputBorder(),contentPadding:EdgeInsets.symmetric(horizontal:12,vertical:10)),items:const [DropdownMenuItem(value:'Booking Date',child:Text('Booking Date')),DropdownMenuItem(value:'Status Date',child:Text('Status Update Date')),DropdownMenuItem(value:'Delivery Date',child:Text('Delivery Date'))],onChanged:(v){if(v!=null)setState(()=>_reportDateBasis=v);}),
