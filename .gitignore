@@ -46,3 +46,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Android release signing material — never commit private keys or passwords
+key.properties
+**/key.properties
+*.jks
+*.keystore
