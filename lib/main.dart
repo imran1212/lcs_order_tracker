@@ -14,7 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 
 String _normalizeLcsCn(String value) =>
-    value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+    value.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
 
 // LCS_BACKGROUND_AUTO_SYNC_V2
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
@@ -1149,7 +1149,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final seen = <String>{};
       for (final order in orders.docs) {
         final data = order.data();
-        final cn = _normalizeCn((data['cn'] ?? '').toString());
+        final cn = _normalizeLcsCn((data['cn'] ?? '').toString());
         if (!RegExp(r'^[A-Z0-9._-]{1,100}
         final registryRef = db.collection('cnRegistry').doc(cn);
         await db.runTransaction((transaction) async {
