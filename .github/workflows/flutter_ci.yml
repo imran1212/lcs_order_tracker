@@ -6,6 +6,17 @@ on:
       - main
       - feature/background-sync-v1.0.5
       - feature/lcs-v1.0.8-reports-export
+      - feature/aqas-package-presubmit
+    paths:
+      - "lib/**"
+      - "test/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "android/**"
+      - ".github/workflows/flutter_ci.yml"
+  pull_request:
+    branches:
+      - main
     paths:
       - "lib/**"
       - "test/**"
@@ -17,6 +28,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: lcs-flutter-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify-and-build:
@@ -36,22 +51,18 @@ jobs:
         run: flutter pub get
 
       - name: Analyze Dart and Flutter source
-        run: flutter analyze --no-pub --no-fatal-infos
+        run: flutter analyze --no-pub
 
-      - name: Run LCS status classification tests
+      - name: Run tests
         run: flutter test --no-pub
 
-      - name: Build release APK for device testing
+      - name: Build release-mode APK for device testing (debug-signed)
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
-      - name: Rename APK with version and update title
-        run: |
-          cp build/app/outputs/flutter-apk/app-release.apk "LCS Tracker By AQAS V.1.0.8 (Backup + CSV Export + Advanced Reports).apk"
-
-      - name: Upload test APK
+      - name: Upload QA APK
         uses: actions/upload-artifact@v4
         with:
-          name: LCS-Tracker-By-AQAS-V1.0.8-Backup-CSV-Advanced-Reports
-          path: "LCS Tracker By AQAS V.1.0.8 (Backup + CSV Export + Advanced Reports).apk"
+          name: LCS-Tracker-AQAS-QA-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
