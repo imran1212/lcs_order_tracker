@@ -2427,7 +2427,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final dir=await Directory.systemTemp.createTemp('aqas_lcs_export_');
       final file=File('${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Report.csv');
       await file.writeAsString(csv,flush:true);
-      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • ${orders.length} orders • \$_reportDateBasis • ${_reportDateText(_reportStart())} to ${_reportDateText(_reportEnd())}');
+      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • ${orders.length} orders • $_reportDateBasis • ${_reportDateText(_reportStart())} to ${_reportDateText(_reportEnd())}');
     } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('CSV export nahi ho saka: $e')));}
   }
   Future<void> _exportJsonBackup(List<OrderData> orders) async {
