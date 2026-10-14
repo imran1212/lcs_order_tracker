@@ -2387,7 +2387,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month - _reportPeriodMonths, 1);
     final lastDay = DateTime(monthStart.year, monthStart.month + 1, 0).day;
-    return DateTime(monthStart.year, monthStart.month, now.day.clamp(1, lastDay));
+    return DateTime(monthStart.year, monthStart.month, now.day.clamp(1, lastDay).toInt());
   }
   String _reportPeriodLabel(int months) => months == 1 ? 'Last 1 month' : 'Last $months months';
   DateTime _reportEnd() {
@@ -2454,7 +2454,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState((){_reportCustomFrom=picked.start;_reportCustomTo=picked.end;});
   }
   Widget _reportMetric(String label,int value,Color color,IconData icon)=>Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:color.withOpacity(.09),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:22),const SizedBox(width:8),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('$value',style:TextStyle(fontSize:22,fontWeight:FontWeight.w900,color:color)),Text(label,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700))]))]));
-  Widget _reportBar(String label,int value,int maxValue,Color color) {final fraction=maxValue<=0?0.0:(value/maxValue).clamp(0.0,1.0);return Padding(padding:const EdgeInsets.only(bottom:10),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700))),Text('$value',style:const TextStyle(fontSize:12,fontWeight:FontWeight.w900))]),const SizedBox(height:5),ClipRRect(borderRadius:BorderRadius.circular(8),child:LinearProgressIndicator(value:fraction,minHeight:8,backgroundColor:const Color(0xFFE5E7EB),color:color))]));}
+  Widget _reportBar(String label,int value,int maxValue,Color color) {final fraction=maxValue<=0?0.0:(value/maxValue).clamp(0.0,1.0).toDouble();return Padding(padding:const EdgeInsets.only(bottom:10),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700))),Text('$value',style:const TextStyle(fontSize:12,fontWeight:FontWeight.w900))]),const SizedBox(height:5),ClipRRect(borderRadius:BorderRadius.circular(8),child:LinearProgressIndicator(value:fraction,minHeight:8,backgroundColor:const Color(0xFFE5E7EB),color:color))]));}
   Widget _advancedReports(List<OrderData> allOrders) {
     final reportOrders=_ordersForReport(allOrders);final total=reportOrders.length;
     final delivered=reportOrders.where(_reportIsDelivered).length,returned=reportOrders.where(_reportIsReturned).length;
