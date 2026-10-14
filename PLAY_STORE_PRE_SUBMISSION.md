@@ -8,7 +8,7 @@
 This ID is intended for the first Play Store listing and must not be changed after publishing.
 
 ## Required before a Play-ready build
-1. In Firebase Console, open project `lcs-tracker-4c90d` and register a new **Android app** with package name `pk.aqas.lcstracker`.
+1. In Firebase Console, open project `lcs-tracker-4c90d` and confirm the **Android app** with package name `pk.aqas.lcstracker` is registered. If it is missing, register it there first.
 2. Confirm in Firebase Console that the Android app registered as `pk.aqas.lcstracker` has the same Firebase project ID and Android app ID represented in `android/app/google-services.json`. The repository file currently contains a client entry for the AQAS package; verify it against Firebase Console before release.
 3. Verify Authentication providers, Firestore, Storage (if receipt uploads use it), and configuration for the new Android app.
 4. Configure a private Android upload keystore in GitHub Actions secrets or Codemagic. Never commit the keystore or passwords; signing files are now excluded by `.gitignore`.
@@ -22,4 +22,5 @@ This ID is intended for the first Play Store listing and must not be changed aft
 - The repository's `google-services.json` contains both the legacy package entry and `pk.aqas.lcstracker`; verify the AQAS entry in Firebase Console rather than relying on the file alone.
 - CI's APK is for device QA and uses the Android debug signing key. It is **not** a Google Play upload artifact.
 - Least-privilege Firestore rules are now tracked in `firestore.rules` and configured by `firebase.json`; they still require emulator validation and deliberate deployment to the correct Firebase project.
+- Cloudflare Worker deployment is manual-only in GitHub Actions, so merging this pull request will not automatically change the live proxy.
 - A green CI build is necessary but not sufficient for Play approval; Play Console declarations and live-device acceptance tests remain required.
