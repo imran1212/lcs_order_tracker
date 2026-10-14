@@ -1148,7 +1148,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final data = order.data();
         final cn = (data['cn'] ?? '').toString().trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
         if (cn.isEmpty || !seen.add(cn)) continue;
-        final registryRef = db.collection('cnRegistry').doc(base64Url.encode(utf8.encode(cn)).replaceAll('=', ''));
+        final registryRef = db.collection('cnRegistry').doc(cn);
         await db.runTransaction((transaction) async {
           final existing = await transaction.get(registryRef);
           if (!existing.exists) {
@@ -4442,8 +4442,7 @@ Future<void> _loadWorkerName() async {
   String _normalizeCn(String value) =>
       value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
 
-  String _cnRegistryId(String cn) =>
-      base64Url.encode(utf8.encode(_normalizeCn(cn))).replaceAll('=', '');
+  String _cnRegistryId(String cn) => _normalizeCn(cn);
 
   DocumentReference<Map<String, dynamic>> _cnRegistryRef(String cn) =>
       FirebaseFirestore.instance.collection('cnRegistry').doc(_cnRegistryId(cn));
@@ -4478,6 +4477,806 @@ Future<void> _loadWorkerName() async {
     final normalizedCns = valid
         .map((draft) => _normalizeCn((draft['cn'] ?? '').toString()))
         .toList();
+    final invalidCns = normalizedCns.where((cn) => !RegExp(r'^[A-Z0-9._-]{1,100}
+    final repeatedInBatch = normalizedCns.where((cn) => !seenCns.add(cn)).toSet();
+    if (repeatedInBatch.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Selected receipts mein duplicate CN hain: ${repeatedInBatch.join(', ')}. Inhein correct karke dobara save karein.')),
+      );
+      return;
+    }
+
+    try {
+      final existingCns = await _findExistingCnNumbers(normalizedCns);
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ye CN pehle se saved hain: ${existingCns.join(', ')}. Duplicate orders save nahi huay.')),
+        );
+        return;
+      }
+      final db = FirebaseFirestore.instance;
+      final ordersCollection = db.collection('orders');
+      final orderRefs = valid.map((_) => ordersCollection.doc()).toList();
+      final registryRefs = normalizedCns.map(_cnRegistryRef).toList();
+      await db.runTransaction((transaction) async {
+        final registrySnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+        for (final registryRef in registryRefs) {
+          registrySnapshots.add(await transaction.get(registryRef));
+        }
+        final occupied = <String>[];
+        for (var i = 0; i < registrySnapshots.length; i++) {
+          if (registrySnapshots[i].exists) occupied.add(normalizedCns[i]);
+        }
+        if (occupied.isNotEmpty) {
+          throw StateError('CN pehle se reserved hai: ${occupied.toSet().join(', ')}');
+        }
+        for (var i = 0; i < valid.length; i++) {
+          final draft = valid[i];
+          final ref = orderRefs[i];
+          final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
+          final cn = _normalizeCn((draft['cn'] ?? '').toString());
+          transaction.set(ref, {
+            'customer': (draft['customer'] ?? '').toString().trim(),
+            'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
+            'cn': cn,
+            'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
+            'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
+            'status': 'Pending API Sync',
+            'destination': (draft['destination'] ?? '').toString().trim(),
+            'workerName': workerController.text.trim(),
+            'workerUid': widget.workerUid,
+            'bookingDate': Timestamp.fromDate(date),
+            'statusDate': null,
+            'deliveryDate': null,
+            'receiptUrls': <String>[],
+            'receiptCount': 1,
+            'receiptUploadStatus': 'temporary_only',
+            'receiptImageName': (draft['imagePath'] ?? '').toString(),
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          transaction.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
+            'cn': cn,
+            'previousStatus': '',
+            'status': 'Pending API Sync',
+            'source': 'bulk_receipt_import',
+            'activityDate': Timestamp.fromDate(date),
+            'recordedAt': FieldValue.serverTimestamp(),
+          });
+          transaction.set(registryRefs[i], {
+            'cn': normalizedCns[i],
+            'orderId': ref.id,
+            'workerUid': widget.workerUid,
+            'createdBy': FirebaseAuth.instance.currentUser!.uid,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+      if (!mounted) return;
+      final skipped = _bulkReceiptDrafts.length - valid.length;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
+      );
+    }
+  }
+
+  Future<void> save() async {
+    if (_bulkReceiptDrafts.length > 1) {
+      await _saveBulkReceiptOrders();
+      return;
+    }
+    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer name and CN number are required.')),
+      );
+      return;
+    }
+
+    final amount = double.tryParse(amountController.text.trim()) ?? 0;
+    final finalBookingDate = bookingDate ?? DateTime.now();
+
+    try {
+      final cn = _normalizeCn(cnController.text);
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CN $cn pehle se saved hai. Duplicate order create nahi hua.')),
+        );
+        return;
+      }
+      // Atomic CN reservation prevents two concurrent saves from creating the same CN.
+      cnController.text = cn;
+      final db = FirebaseFirestore.instance;
+      final orderRef = db.collection('orders').doc();
+      final registryRef = _cnRegistryRef(cn);
+      await db.runTransaction((transaction) async {
+        final registry = await transaction.get(registryRef);
+        if (registry.exists) throw StateError('CN $cn pehle se reserved hai.');
+        transaction.set(registryRef, {
+          'cn': cn,
+          'orderId': orderRef.id,
+          'workerUid': widget.workerUid,
+          'createdBy': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef, {
+        'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': amount,
+        'status': 'Pending API Sync',
+        'destination': destinationController.text.trim(),
+        'workerName': workerController.text.trim(),
+        'workerUid': widget.workerUid,
+        'bookingDate': Timestamp.fromDate(finalBookingDate),
+        'statusDate': null,
+        'deliveryDate': null,
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'order_created',
+          'activityDate': Timestamp.fromDate(finalBookingDate),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Initial status history was committed atomically with the order.
+
+      // Spark development mode: receipt images are used for OCR/review only.
+      // Permanent Storage upload is intentionally disabled for now.
+      await orderRef.update({
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Automatically fetch LCS status immediately after saving a new order.
+      // Keep the order saved even if the courier API is temporarily unavailable.
+      String? syncWarning;
+      try {
+        final result = await LcsApiService.syncCn(cnController.text.trim());
+        await orderRef.update({
+          'status': result.status,
+          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+          'lastApiSyncAt': FieldValue.serverTimestamp(),
+          'lcsRawStatus': result.status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (result.status.trim() != 'Pending API Sync') {
+          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+          await orderRef.collection('lcsStatusHistory')
+              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+              .set({
+            'cn': cnController.text.trim(),
+            'previousStatus': 'Pending API Sync',
+            'status': result.status.trim(),
+            'source': 'new_order_auto_sync',
+            'activityDate': result.statusDate == null
+                ? Timestamp.now()
+                : Timestamp.fromDate(result.statusDate!),
+            'recordedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      if (syncWarning != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order save nahi hua: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 45,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Add New Order',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.document_scanner_rounded,
+                        color: Color(0xFF1769E0),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Scan LCS Receipt',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _pickReceiptImages,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Gallery'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('Camera'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_ocrLoading) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (_ocrMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _ocrMessage,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_receiptImages.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1769E0),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            _field(
+              controller: customerController,
+              label: 'Customer Name',
+              icon: Icons.person_outline_rounded,
+            ),
+
+            _field(
+              controller: customerPhoneController,
+              label: 'Customer Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+            ),
+
+            _field(
+              controller: cnController,
+              label: 'LCS CN Number',
+              icon: Icons.qr_code_2_rounded,
+            ),
+
+            _field(
+              controller: productController,
+              label: 'Product',
+              icon: Icons.shopping_bag_outlined,
+            ),
+
+            _field(
+              controller: amountController,
+              label: 'COD Amount',
+              icon: Icons.payments_outlined,
+              keyboardType: TextInputType.number,
+            ),
+
+            _field(
+              controller: destinationController,
+              label: 'Destination',
+              icon: Icons.location_on_outlined,
+            ),
+
+            _field(
+              controller: bookingDateController,
+              label: 'Booking Date',
+              icon: Icons.calendar_today_outlined,
+              readOnly: true,
+              onTap: _pickBookingDate,
+            ),
+
+            _field(
+              controller: workerController,
+              label: 'Worker Name',
+              icon: Icons.person_outline_rounded,
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton.icon(
+                onPressed: save,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text(
+                  'Add Order',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF087A46),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+}
+
+}
+).hasMatch(cn)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CN format invalid hai. Sirf letters, numbers, dot, underscore aur hyphen use karein.')),
+        );
+        return;
+      }
+      final existingCns = await _findExistingCnNumbers([cn]);
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CN $cn pehle se saved hai. Duplicate order create nahi hua.')),
+        );
+        return;
+      }
+      // Atomic CN reservation prevents two concurrent saves from creating the same CN.
+      cnController.text = cn;
+      final db = FirebaseFirestore.instance;
+      final orderRef = db.collection('orders').doc();
+      final registryRef = _cnRegistryRef(cn);
+      await db.runTransaction((transaction) async {
+        final registry = await transaction.get(registryRef);
+        if (registry.exists) throw StateError('CN $cn pehle se reserved hai.');
+        transaction.set(registryRef, {
+          'cn': cn,
+          'orderId': orderRef.id,
+          'workerUid': widget.workerUid,
+          'createdBy': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef, {
+        'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': amount,
+        'status': 'Pending API Sync',
+        'destination': destinationController.text.trim(),
+        'workerName': workerController.text.trim(),
+        'workerUid': widget.workerUid,
+        'bookingDate': Timestamp.fromDate(finalBookingDate),
+        'statusDate': null,
+        'deliveryDate': null,
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'order_created',
+          'activityDate': Timestamp.fromDate(finalBookingDate),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Initial status history was committed atomically with the order.
+
+      // Spark development mode: receipt images are used for OCR/review only.
+      // Permanent Storage upload is intentionally disabled for now.
+      await orderRef.update({
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Automatically fetch LCS status immediately after saving a new order.
+      // Keep the order saved even if the courier API is temporarily unavailable.
+      String? syncWarning;
+      try {
+        final result = await LcsApiService.syncCn(cnController.text.trim());
+        await orderRef.update({
+          'status': result.status,
+          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+          'lastApiSyncAt': FieldValue.serverTimestamp(),
+          'lcsRawStatus': result.status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (result.status.trim() != 'Pending API Sync') {
+          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+          await orderRef.collection('lcsStatusHistory')
+              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+              .set({
+            'cn': cnController.text.trim(),
+            'previousStatus': 'Pending API Sync',
+            'status': result.status.trim(),
+            'source': 'new_order_auto_sync',
+            'activityDate': result.statusDate == null
+                ? Timestamp.now()
+                : Timestamp.fromDate(result.statusDate!),
+            'recordedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      if (syncWarning != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order save nahi hua: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 45,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Add New Order',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.document_scanner_rounded,
+                        color: Color(0xFF1769E0),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Scan LCS Receipt',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _pickReceiptImages,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Gallery'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('Camera'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_ocrLoading) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (_ocrMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _ocrMessage,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_receiptImages.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1769E0),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            _field(
+              controller: customerController,
+              label: 'Customer Name',
+              icon: Icons.person_outline_rounded,
+            ),
+
+            _field(
+              controller: customerPhoneController,
+              label: 'Customer Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+            ),
+
+            _field(
+              controller: cnController,
+              label: 'LCS CN Number',
+              icon: Icons.qr_code_2_rounded,
+            ),
+
+            _field(
+              controller: productController,
+              label: 'Product',
+              icon: Icons.shopping_bag_outlined,
+            ),
+
+            _field(
+              controller: amountController,
+              label: 'COD Amount',
+              icon: Icons.payments_outlined,
+              keyboardType: TextInputType.number,
+            ),
+
+            _field(
+              controller: destinationController,
+              label: 'Destination',
+              icon: Icons.location_on_outlined,
+            ),
+
+            _field(
+              controller: bookingDateController,
+              label: 'Booking Date',
+              icon: Icons.calendar_today_outlined,
+              readOnly: true,
+              onTap: _pickBookingDate,
+            ),
+
+            _field(
+              controller: workerController,
+              label: 'Worker Name',
+              icon: Icons.person_outline_rounded,
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton.icon(
+                onPressed: save,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text(
+                  'Add Order',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF087A46),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+}
+
+}
+).hasMatch(cn)).toSet();
+    if (invalidCns.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Invalid CN format: ${invalidCns.join(', ')}. CN mein letters, numbers, dot, underscore ya hyphen use karein.')),
+      );
+      return;
+    }
     final seenCns = <String>{};
     final repeatedInBatch = normalizedCns.where((cn) => !seenCns.add(cn)).toSet();
     if (repeatedInBatch.isNotEmpty) {
@@ -4585,6 +5384,352 @@ Future<void> _loadWorkerName() async {
 
     try {
       final cn = _normalizeCn(cnController.text);
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}
+      if (existingCns.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('CN $cn pehle se saved hai. Duplicate order create nahi hua.')),
+        );
+        return;
+      }
+      // Atomic CN reservation prevents two concurrent saves from creating the same CN.
+      cnController.text = cn;
+      final db = FirebaseFirestore.instance;
+      final orderRef = db.collection('orders').doc();
+      final registryRef = _cnRegistryRef(cn);
+      await db.runTransaction((transaction) async {
+        final registry = await transaction.get(registryRef);
+        if (registry.exists) throw StateError('CN $cn pehle se reserved hai.');
+        transaction.set(registryRef, {
+          'cn': cn,
+          'orderId': orderRef.id,
+          'workerUid': widget.workerUid,
+          'createdBy': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef, {
+        'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': amount,
+        'status': 'Pending API Sync',
+        'destination': destinationController.text.trim(),
+        'workerName': workerController.text.trim(),
+        'workerUid': widget.workerUid,
+        'bookingDate': Timestamp.fromDate(finalBookingDate),
+        'statusDate': null,
+        'deliveryDate': null,
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'order_created',
+          'activityDate': Timestamp.fromDate(finalBookingDate),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Initial status history was committed atomically with the order.
+
+      // Spark development mode: receipt images are used for OCR/review only.
+      // Permanent Storage upload is intentionally disabled for now.
+      await orderRef.update({
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Automatically fetch LCS status immediately after saving a new order.
+      // Keep the order saved even if the courier API is temporarily unavailable.
+      String? syncWarning;
+      try {
+        final result = await LcsApiService.syncCn(cnController.text.trim());
+        await orderRef.update({
+          'status': result.status,
+          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+          'lastApiSyncAt': FieldValue.serverTimestamp(),
+          'lcsRawStatus': result.status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (result.status.trim() != 'Pending API Sync') {
+          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+          await orderRef.collection('lcsStatusHistory')
+              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+              .set({
+            'cn': cnController.text.trim(),
+            'previousStatus': 'Pending API Sync',
+            'status': result.status.trim(),
+            'source': 'new_order_auto_sync',
+            'activityDate': result.statusDate == null
+                ? Timestamp.now()
+                : Timestamp.fromDate(result.statusDate!),
+            'recordedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      if (syncWarning != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order save nahi hua: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 45,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Add New Order',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.document_scanner_rounded,
+                        color: Color(0xFF1769E0),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Scan LCS Receipt',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _pickReceiptImages,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Gallery'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('Camera'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_ocrLoading) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (_ocrMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _ocrMessage,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_receiptImages.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1769E0),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            _field(
+              controller: customerController,
+              label: 'Customer Name',
+              icon: Icons.person_outline_rounded,
+            ),
+
+            _field(
+              controller: customerPhoneController,
+              label: 'Customer Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+            ),
+
+            _field(
+              controller: cnController,
+              label: 'LCS CN Number',
+              icon: Icons.qr_code_2_rounded,
+            ),
+
+            _field(
+              controller: productController,
+              label: 'Product',
+              icon: Icons.shopping_bag_outlined,
+            ),
+
+            _field(
+              controller: amountController,
+              label: 'COD Amount',
+              icon: Icons.payments_outlined,
+              keyboardType: TextInputType.number,
+            ),
+
+            _field(
+              controller: destinationController,
+              label: 'Destination',
+              icon: Icons.location_on_outlined,
+            ),
+
+            _field(
+              controller: bookingDateController,
+              label: 'Booking Date',
+              icon: Icons.calendar_today_outlined,
+              readOnly: true,
+              onTap: _pickBookingDate,
+            ),
+
+            _field(
+              controller: workerController,
+              label: 'Worker Name',
+              icon: Icons.person_outline_rounded,
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton.icon(
+                onPressed: save,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text(
+                  'Add Order',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF087A46),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+}
+
+}
+).hasMatch(cn)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CN format invalid hai. Sirf letters, numbers, dot, underscore aur hyphen use karein.')),
+        );
+        return;
+      }
       final existingCns = await _findExistingCnNumbers([cn]);
       if (existingCns.isNotEmpty) {
         if (!mounted) return;
