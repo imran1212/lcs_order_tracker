@@ -11,6 +11,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V2
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
@@ -1120,6 +1121,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
   String? _bulkSyncJobId;
+  int _reportPeriodMonths = 6;
+  String _reportDateBasis = 'Booking Date';
+  DateTime? _reportCustomFrom;
+  DateTime? _reportCustomTo;
   bool _showAllStationDelayedOrders = false;
   int _bottomNavIndex = 0;
   final ScrollController _dashboardScrollController = ScrollController();
@@ -1775,12 +1780,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     },
                   ),
 
+                const SizedBox(height: 14),
+                Container(key: _reportsSectionKey),
+                _advancedReports(docs.map((doc) => OrderData.fromFirestore(doc)).toList()),
                 if (isAdmin) ...[
-                  const SizedBox(height: 14),
-                  Container(key: _reportsSectionKey),
-                  _workerPerformanceReport(
-                    docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
-                  ),
+                  const SizedBox(height: 12),
+                  _workerPerformanceReport(docs.map((doc) => OrderData.fromFirestore(doc)).toList()),
                 ],
 
                 const SizedBox(height: 14),
@@ -2368,6 +2373,100 @@ class _DashboardScreenState extends State<DashboardScreen> {
         statusFilter != 'All' ||
         workerFilter != 'All' ||
         dateFilterType != 'Booking Date';
+  }
+
+
+  DateTime? _reportOrderDate(OrderData order) {
+    switch (_reportDateBasis) { case 'Status Date': return order.statusDate; case 'Delivery Date': return order.deliveryDate; default: return order.bookingDate; }
+  }
+  DateTime _reportStart() {
+    if (_reportCustomFrom != null) return _reportCustomFrom!;
+    final now = DateTime.now(); return DateTime(now.year, now.month - _reportPeriodMonths, now.day);
+  }
+  DateTime _reportEnd() {
+    if (_reportCustomTo != null) return DateTime(_reportCustomTo!.year,_reportCustomTo!.month,_reportCustomTo!.day,23,59,59,999);
+    return DateTime.now();
+  }
+  List<OrderData> _ordersForReport(List<OrderData> allOrders) {
+    final start=_reportStart(), end=_reportEnd();
+    return allOrders.where((o) {final d=_reportOrderDate(o);return d!=null&&!d.isBefore(start)&&!d.isAfter(end);}).toList();
+  }
+  bool _reportIsDelivered(OrderData o) {final s=o.status.toLowerCase().trim();return s.contains('delivered')&&!s.contains('undeliver');}
+  bool _reportIsReturned(OrderData o)=>o.status.toLowerCase().trim().contains('return');
+  String _reportCity(String destination) {final v=destination.trim();if(v.isEmpty)return 'Unknown';final p=v.split(',');return p.last.trim().isEmpty?v:p.last.trim();}
+  String _csvCell(Object? v)=>'"\${(v??'').toString().replaceAll('"','""')}"';
+  String _reportDateText(DateTime? d) {if(d==null)return '';return '\${d.year.toString().padLeft(4,'0')}-\${d.month.toString().padLeft(2,'0')}-\${d.day.toString().padLeft(2,'0')}';}
+  Future<void> _exportReportCsv(List<OrderData> orders) async {
+    try {
+      final rows=<List<Object?>>[
+        <Object?>['CN','Booking Date','Status Date','Delivery Date','Customer','Phone','Product','Amount','City','Status','Worker','Worker UID'],
+        ...orders.map((o)=><Object?>[o.cn,_reportDateText(o.bookingDate),_reportDateText(o.statusDate),_reportDateText(o.deliveryDate),o.customer,o.customerPhone,o.product,o.amount,_reportCity(o.destination),o.status,o.workerName,o.workerUid]),
+      ];
+      final csv='\uFEFF\${rows.map((r)=>r.map(_csvCell).join(',')).join('\r\n')}';
+      final dir=await Directory.systemTemp.createTemp('aqas_lcs_export_');
+      final file=File('\${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Report.csv');
+      await file.writeAsString(csv,flush:true);
+      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • \${orders.length} orders • \$_reportDateBasis • \${_reportDateText(_reportStart())} to \${_reportDateText(_reportEnd())}');
+    } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('CSV export nahi ho saka: $e')));}
+  }
+  Future<void> _exportJsonBackup(List<OrderData> orders) async {
+    try {
+      final payload=<String,dynamic>{
+        'app':'LCS Tracker By AQAS','version':'1.0.8+9','exportedAt':DateTime.now().toIso8601String(),'recordCount':orders.length,'dateBasis':_reportDateBasis,'from':_reportDateText(_reportStart()),'to':_reportDateText(_reportEnd()),
+        'orders':orders.map((o)=><String,dynamic>{'id':o.id,'cn':o.cn,'bookingDate':o.bookingDate?.toIso8601String(),'statusDate':o.statusDate?.toIso8601String(),'deliveryDate':o.deliveryDate?.toIso8601String(),'customer':o.customer,'customerPhone':o.customerPhone,'product':o.product,'amount':o.amount,'destination':o.destination,'status':o.status,'workerName':o.workerName,'workerUid':o.workerUid,'receiptUrls':o.receiptUrls}).toList(),
+      };
+      final dir=await Directory.systemTemp.createTemp('aqas_lcs_backup_');
+      final file=File('\${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Backup.json');
+      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload),flush:true);
+      await Share.shareXFiles([XFile(file.path,mimeType:'application/json')],subject:'LCS Tracker By AQAS V.1.0.8 JSON Backup',text:'JSON backup • \${orders.length} orders. Keep this file in a safe place.');
+    } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('JSON backup export nahi ho saka: $e')));}
+  }
+  Future<void> _pickReportRange() async {
+    final now=DateTime.now();
+    final picked=await showDateRangePicker(context:context,firstDate:DateTime(now.year,now.month-6,1),lastDate:now,initialDateRange:DateTimeRange(start:_reportStart().isBefore(DateTime(now.year,now.month-6,1))?DateTime(now.year,now.month-6,1):_reportStart(),end:_reportEnd().isAfter(now)?now:_reportEnd()),helpText:'Choose report range (maximum 6 months)');
+    if(picked==null||!mounted)return;
+    if(picked.start.isBefore(DateTime(now.year,now.month-6,now.day))){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Reports mein maximum 6 months ka range select kar sakte hain.')));return;}
+    setState((){_reportCustomFrom=picked.start;_reportCustomTo=picked.end;});
+  }
+  Widget _reportMetric(String label,int value,Color color,IconData icon)=>Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:color.withOpacity(.09),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:22),const SizedBox(width:8),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('$value',style:TextStyle(fontSize:22,fontWeight:FontWeight.w900,color:color)),Text(label,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700))]))]));
+  Widget _reportBar(String label,int value,int maxValue,Color color) {final fraction=maxValue<=0?0.0:(value/maxValue).clamp(0.0,1.0);return Padding(padding:const EdgeInsets.only(bottom:10),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700))),Text('$value',style:const TextStyle(fontSize:12,fontWeight:FontWeight.w900))]),const SizedBox(height:5),ClipRRect(borderRadius:BorderRadius.circular(8),child:LinearProgressIndicator(value:fraction,minHeight:8,backgroundColor:const Color(0xFFE5E7EB),color:color))]));}
+  Widget _advancedReports(List<OrderData> allOrders) {
+    final reportOrders=_ordersForReport(allOrders);final total=reportOrders.length;
+    final delivered=reportOrders.where(_reportIsDelivered).length,returned=reportOrders.where(_reportIsReturned).length;
+    final deliveryRate=total==0?0:(delivered*100/total).round(),returnRate=total==0?0:(returned*100/total).round();
+    final cities=<String,List<OrderData>>{},workers=<String,List<OrderData>>{};final statuses=<String,int>{};
+    for(final o in reportOrders){cities.putIfAbsent(_reportCity(o.destination),()=> <OrderData>[]).add(o);final key=o.workerUid.trim().isEmpty?'unassigned':o.workerUid.trim();workers.putIfAbsent(key,()=> <OrderData>[]).add(o);final s=o.status.trim().isEmpty?'Unknown':o.status.trim();statuses[s]=(statuses[s]??0)+1;}
+    final cityEntries=cities.entries.toList()..sort((a,b)=>b.value.length.compareTo(a.value.length));
+    final workerEntries=workers.entries.toList()..sort((a,b)=>b.value.length.compareTo(a.value.length));
+    final statusEntries=statuses.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
+    final maxCity=cityEntries.isEmpty?0:cityEntries.first.value.length,maxStatus=statusEntries.isEmpty?0:statusEntries.first.value;
+    final workerNames=<String,String>{};for(final o in reportOrders){final key=o.workerUid.trim().isEmpty?'unassigned':o.workerUid.trim();workerNames[key]=o.workerName.trim().isEmpty?(key=='unassigned'?'Unassigned':key):o.workerName.trim();}
+    final startLabel=_reportDateText(_reportStart()),endLabel=_reportDateText(_reportEnd());
+    return Container(width:double.infinity,padding:const EdgeInsets.all(15),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(20),border:Border.all(color:const Color(0xFFDCE9E1)),boxShadow:const [BoxShadow(color:Color(0x0D087A46),blurRadius:14,offset:Offset(0,4))]),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Row(children:[Icon(Icons.query_stats_rounded,color:Color(0xFF087A46),size:24),SizedBox(width:8),Expanded(child:Text('AQAS Business Reports',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900)))]),
+      const SizedBox(height:5),Text('Date basis: $_reportDateBasis • $startLabel to $endLabel',style:const TextStyle(fontSize:11,color:Colors.blueGrey)),
+      const SizedBox(height:12),Wrap(spacing:7,runSpacing:7,children:[
+        for(final months in [1,3,6]) ChoiceChip(label:Text('Last $months month\${months==1?'':'s'}'),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
+        OutlinedButton.icon(onPressed:_pickReportRange,icon:const Icon(Icons.date_range_rounded,size:18),label:const Text('Custom (6 months max)')),
+      ]),
+      const SizedBox(height:8),DropdownButtonFormField<String>(value:_reportDateBasis,isExpanded:true,decoration:const InputDecoration(labelText:'Report date basis',prefixIcon:Icon(Icons.event_available_rounded),border:OutlineInputBorder(),contentPadding:EdgeInsets.symmetric(horizontal:12,vertical:10)),items:const [DropdownMenuItem(value:'Booking Date',child:Text('Booking Date')),DropdownMenuItem(value:'Status Date',child:Text('Status Update Date')),DropdownMenuItem(value:'Delivery Date',child:Text('Delivery Date'))],onChanged:(v){if(v!=null)setState(()=>_reportDateBasis=v);}),
+      const SizedBox(height:12),
+      if(total==0) const Padding(padding:EdgeInsets.symmetric(vertical:12),child:Text('Is date range/date basis ke liye orders nahi mile. Booking dates ya filters check karein.',style:TextStyle(color:Colors.blueGrey)))
+      else ...[
+        GridView.count(crossAxisCount:2,shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),childAspectRatio:2.15,mainAxisSpacing:9,crossAxisSpacing:9,children:[
+          _reportMetric('Total Orders',total,const Color(0xFF087A46),Icons.inventory_2_rounded),_reportMetric('Delivered • $deliveryRate%',delivered,const Color(0xFF16834A),Icons.check_circle_rounded),_reportMetric('Returned • $returnRate%',returned,const Color(0xFFC2415D),Icons.assignment_return_rounded),_reportMetric('Other / Active',total-delivered-returned,const Color(0xFF1769E0),Icons.local_shipping_rounded),
+        ]),
+        const SizedBox(height:16),const Text('Top Cities by Order Volume',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...cityEntries.take(10).map((e)=>_reportBar(e.key,e.value.length,maxCity,const Color(0xFF087A46))),
+        const SizedBox(height:8),const Text('Status Breakdown',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...statusEntries.take(8).map((e)=>_reportBar(e.key,e.value,maxStatus,const Color(0xFF1769E0))),
+        const SizedBox(height:8),const Text('Worker Performance',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),
+        ...workerEntries.take(10).map((e){final items=e.value,d=items.where(_reportIsDelivered).length,r=items.where(_reportIsReturned).length,rate=items.isEmpty?0:(d*100/items.length).round(),name=workerNames[e.key]??e.key;return Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(name,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.w800))),Text('\${items.length} orders',style:const TextStyle(fontSize:11,fontWeight:FontWeight.w800))]),const SizedBox(height:5),Text('Delivered $d • Returned $r • Delivery rate $rate%',style:const TextStyle(fontSize:11,color:Colors.blueGrey))]));}),
+      ],
+      const Divider(height:24),Wrap(spacing:8,runSpacing:8,children:[
+        FilledButton.icon(onPressed:reportOrders.isEmpty?null:()=>_exportReportCsv(reportOrders),icon:const Icon(Icons.file_download_outlined),label:const Text('Export CSV'),style:FilledButton.styleFrom(backgroundColor:const Color(0xFF087A46),foregroundColor:Colors.white)),
+        OutlinedButton.icon(onPressed:reportOrders.isEmpty?null:()=>_exportJsonBackup(reportOrders),icon:const Icon(Icons.backup_outlined),label:const Text('JSON Backup')),
+      ]),
+      const SizedBox(height:4),const Text('Exports include matching orders for selected period/date basis. JSON export is a backup file, not a one-tap restore.',style:TextStyle(fontSize:10,color:Colors.blueGrey)),
+    ]));
   }
 
   // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
