@@ -1,0 +1,102 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(profilePath(request.auth.uid));
+    }
+
+    function activeUser() {
+      return hasProfile() &&
+        get(profilePath(request.auth.uid)).data.get('active', true) != false;
+    }
+
+    function isAdmin() {
+      return activeUser() &&
+        get(profilePath(request.auth.uid)).data.get('role', '') == 'admin';
+    }
+
+    function ownsOrderData(data) {
+      return signedIn() && data.get('workerUid', '') == request.auth.uid;
+    }
+
+    function canReadOrderData(data) {
+      return activeUser() && (isAdmin() || ownsOrderData(data));
+    }
+
+    match /users/{userId} {
+      allow get: if activeUser() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+
+      // Worker profiles are provisioned by an authenticated admin only.
+      allow create: if isAdmin() &&
+        request.resource.data.get('role', '') == 'worker' &&
+        request.resource.data.get('active', true) == true;
+      allow update: if isAdmin() &&
+        request.resource.data.get('role', '') == resource.data.get('role', '');
+      allow delete: if isAdmin() &&
+        resource.data.get('role', '') == 'worker';
+    }
+
+    match /orders/{orderId} {
+      allow get, list: if canReadOrderData(resource.data);
+
+      allow create: if activeUser() &&
+        (isAdmin() || ownsOrderData(request.resource.data));
+
+      allow update: if activeUser() &&
+        (isAdmin() ||
+          (ownsOrderData(resource.data) &&
+           ownsOrderData(request.resource.data)));
+
+      allow delete: if activeUser() &&
+        (isAdmin() || ownsOrderData(resource.data));
+
+      match /lcsStatusHistory/{eventId} {
+        allow get, list: if canReadOrderData(
+          get(/databases/$(database)/documents/orders/$(orderId)).data
+        );
+
+        // Keep tracking history append-only for audit integrity.
+        allow create: if activeUser() &&
+          (isAdmin() ||
+            ownsOrderData(get(/databases/$(database)/documents/orders/$(orderId)).data));
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /syncJobs/{jobId} {
+      allow get, list: if activeUser() &&
+        (isAdmin() || resource.data.get('ownerUid', '') == request.auth.uid);
+      allow create: if activeUser() &&
+        (isAdmin() || request.resource.data.get('ownerUid', '') == request.auth.uid);
+      allow update: if activeUser() &&
+        (isAdmin() || resource.data.get('ownerUid', '') == request.auth.uid);
+      allow delete: if isAdmin();
+
+      match /items/{itemId} {
+        function ownsParentJob() {
+          return activeUser() &&
+            (isAdmin() ||
+              get(/databases/$(database)/documents/syncJobs/$(jobId)).data.get('ownerUid', '') == request.auth.uid);
+        }
+        allow get, list: if ownsParentJob();
+        allow create, update: if ownsParentJob();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Deny every unrecognized collection and document path by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
