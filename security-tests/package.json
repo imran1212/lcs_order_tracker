@@ -1,0 +1,10 @@
+{
+  "name": "lcs-tracker-security-tests",
+  "private": true,
+  "type": "module",
+  "description": "Firestore security rules tests for LCS Tracker by AQAS",
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^12.0.0"
+  }
+}
