@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/background-sync-v1.0.5
     paths:
       - "lib/**"
       - "test/**"
