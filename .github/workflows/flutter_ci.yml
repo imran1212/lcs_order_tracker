@@ -18,6 +18,7 @@ on:
       - "firestore.rules"
       - "firebase.json"
       - "wrangler.toml"
+      - "security-tests/**"
       - ".github/workflows/flutter_ci.yml"
   pull_request:
     branches:
