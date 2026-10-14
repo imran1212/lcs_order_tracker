@@ -70,7 +70,10 @@ service cloud.firestore {
         allow create: if activeUser() &&
           (isAdmin() ||
             ownsOrderData(getAfter(/databases/$(database)/documents/orders/$(orderId)).data));
-        allow update, delete: if isAdmin();
+        allow update: if activeUser() &&
+          (isAdmin() ||
+            ownsOrderData(get(/databases/$(database)/documents/orders/$(orderId)).data));
+        allow delete: if isAdmin();
       }
     }
 
