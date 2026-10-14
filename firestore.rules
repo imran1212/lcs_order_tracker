@@ -92,10 +92,16 @@ service cloud.firestore {
         function ownsParentJob() {
           return activeUser() &&
             (isAdmin() ||
+              get(/databases/$(database)/documents/syncJobs/$(jobId)).data.get('ownerUid', '') == request.auth.uid);
+        }
+        function ownsParentJobAfter() {
+          return activeUser() &&
+            (isAdmin() ||
               getAfter(/databases/$(database)/documents/syncJobs/$(jobId)).data.get('ownerUid', '') == request.auth.uid);
         }
         allow get, list: if ownsParentJob();
-        allow create, update: if ownsParentJob();
+        allow create: if ownsParentJobAfter();
+        allow update: if ownsParentJob();
         allow delete: if isAdmin();
       }
     }
