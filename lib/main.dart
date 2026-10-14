@@ -1125,6 +1125,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _reportDateBasis = 'Booking Date';
   DateTime? _reportCustomFrom;
   DateTime? _reportCustomTo;
+  String _reportCityFilter = 'All';
+  String _reportWorkerFilter = 'All';
+  String _reportStatusFilter = 'All';
   bool _showAllStationDelayedOrders = false;
   int _bottomNavIndex = 0;
   final ScrollController _dashboardScrollController = ScrollController();
@@ -2388,25 +2391,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return DateTime.now();
   }
   List<OrderData> _ordersForReport(List<OrderData> allOrders) {
-    final start=_reportStart(), end=_reportEnd();
-    return allOrders.where((o) {final d=_reportOrderDate(o);return d!=null&&!d.isBefore(start)&&!d.isAfter(end);}).toList();
+    final start = _reportStart(), end = _reportEnd();
+    return allOrders.where((o) {
+      final d = _reportOrderDate(o);
+      if (d == null || d.isBefore(start) || d.isAfter(end)) return false;
+      final city = _reportCity(o.destination);
+      final worker = o.workerUid.trim().isEmpty ? 'unassigned' : o.workerUid.trim();
+      final status = o.status.trim().isEmpty ? 'Unknown' : o.status.trim();
+      return (_reportCityFilter == 'All' || city == _reportCityFilter)
+          && (_reportWorkerFilter == 'All' || worker == _reportWorkerFilter)
+          && (_reportStatusFilter == 'All' || status == _reportStatusFilter);
+    }).toList();
   }
   bool _reportIsDelivered(OrderData o) {final s=o.status.toLowerCase().trim();return s.contains('delivered')&&!s.contains('undeliver');}
   bool _reportIsReturned(OrderData o)=>o.status.toLowerCase().trim().contains('return');
-  String _reportCity(String destination) {final v=destination.trim();if(v.isEmpty)return 'Unknown';final p=v.split(',');return p.last.trim().isEmpty?v:p.last.trim();}
-  String _csvCell(Object? v)=>'"\${(v??'').toString().replaceAll('"','""')}"';
-  String _reportDateText(DateTime? d) {if(d==null)return '';return '\${d.year.toString().padLeft(4,'0')}-\${d.month.toString().padLeft(2,'0')}-\${d.day.toString().padLeft(2,'0')}';}
+  String _reportCity(String destination) {
+    final v = destination.trim();
+    if (v.isEmpty) return 'Unknown';
+    final parts = v.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return 'Unknown';
+    if (parts.length > 1 && const {'pakistan', 'pk'}.contains(parts.last.toLowerCase())) {
+      return parts[parts.length - 2];
+    }
+    return parts.last;
+  }
+  String _csvCell(Object? v)=>'"${(v??'').toString().replaceAll('"','""')}"';
+  String _reportDateText(DateTime? d) {if(d==null)return '';return '${d.year.toString().padLeft(4,'0')}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';}
   Future<void> _exportReportCsv(List<OrderData> orders) async {
     try {
       final rows=<List<Object?>>[
         <Object?>['CN','Booking Date','Status Date','Delivery Date','Customer','Phone','Product','Amount','City','Status','Worker','Worker UID'],
         ...orders.map((o)=><Object?>[o.cn,_reportDateText(o.bookingDate),_reportDateText(o.statusDate),_reportDateText(o.deliveryDate),o.customer,o.customerPhone,o.product,o.amount,_reportCity(o.destination),o.status,o.workerName,o.workerUid]),
       ];
-      final csv='\uFEFF\${rows.map((r)=>r.map(_csvCell).join(',')).join('\r\n')}';
+      final csv='\uFEFF${rows.map((r)=>r.map(_csvCell).join(',')).join('\r\n')}';
       final dir=await Directory.systemTemp.createTemp('aqas_lcs_export_');
-      final file=File('\${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Report.csv');
+      final file=File('${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Report.csv');
       await file.writeAsString(csv,flush:true);
-      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • \${orders.length} orders • \$_reportDateBasis • \${_reportDateText(_reportStart())} to \${_reportDateText(_reportEnd())}');
+      await Share.shareXFiles([XFile(file.path,mimeType:'text/csv')],subject:'LCS Tracker By AQAS V.1.0.8 Report',text:'CSV report • ${orders.length} orders • \$_reportDateBasis • ${_reportDateText(_reportStart())} to ${_reportDateText(_reportEnd())}');
     } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('CSV export nahi ho saka: $e')));}
   }
   Future<void> _exportJsonBackup(List<OrderData> orders) async {
@@ -2416,9 +2437,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'orders':orders.map((o)=><String,dynamic>{'id':o.id,'cn':o.cn,'bookingDate':o.bookingDate?.toIso8601String(),'statusDate':o.statusDate?.toIso8601String(),'deliveryDate':o.deliveryDate?.toIso8601String(),'customer':o.customer,'customerPhone':o.customerPhone,'product':o.product,'amount':o.amount,'destination':o.destination,'status':o.status,'workerName':o.workerName,'workerUid':o.workerUid,'receiptUrls':o.receiptUrls}).toList(),
       };
       final dir=await Directory.systemTemp.createTemp('aqas_lcs_backup_');
-      final file=File('\${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Backup.json');
+      final file=File('${dir.path}/LCS_Tracker_By_AQAS_V1.0.8_Backup.json');
       await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload),flush:true);
-      await Share.shareXFiles([XFile(file.path,mimeType:'application/json')],subject:'LCS Tracker By AQAS V.1.0.8 JSON Backup',text:'JSON backup • \${orders.length} orders. Keep this file in a safe place.');
+      await Share.shareXFiles([XFile(file.path,mimeType:'application/json')],subject:'LCS Tracker By AQAS V.1.0.8 JSON Backup',text:'JSON backup • ${orders.length} orders. Keep this file in a safe place.');
     } catch(e) {if(!mounted)return;ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('JSON backup export nahi ho saka: $e')));}
   }
   Future<void> _pickReportRange() async {
@@ -2442,14 +2463,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final maxCity=cityEntries.isEmpty?0:cityEntries.first.value.length,maxStatus=statusEntries.isEmpty?0:statusEntries.first.value;
     final workerNames=<String,String>{};for(final o in reportOrders){final key=o.workerUid.trim().isEmpty?'unassigned':o.workerUid.trim();workerNames[key]=o.workerName.trim().isEmpty?(key=='unassigned'?'Unassigned':key):o.workerName.trim();}
     final startLabel=_reportDateText(_reportStart()),endLabel=_reportDateText(_reportEnd());
+    final allCities = allOrders.map((o) => _reportCity(o.destination)).toSet().toList()..sort();
+    final allStatuses = allOrders.map((o) => o.status.trim().isEmpty ? 'Unknown' : o.status.trim()).toSet().toList()..sort();
+    final allWorkers = <String, String>{};
+    for (final o in allOrders) {
+      final uid = o.workerUid.trim().isEmpty ? 'unassigned' : o.workerUid.trim();
+      allWorkers[uid] = o.workerName.trim().isEmpty ? (uid == 'unassigned' ? 'Unassigned' : uid) : o.workerName.trim();
+    }
     return Container(width:double.infinity,padding:const EdgeInsets.all(15),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(20),border:Border.all(color:const Color(0xFFDCE9E1)),boxShadow:const [BoxShadow(color:Color(0x0D087A46),blurRadius:14,offset:Offset(0,4))]),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       const Row(children:[Icon(Icons.query_stats_rounded,color:Color(0xFF087A46),size:24),SizedBox(width:8),Expanded(child:Text('AQAS Business Reports',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900)))]),
       const SizedBox(height:5),Text('Date basis: $_reportDateBasis • $startLabel to $endLabel',style:const TextStyle(fontSize:11,color:Colors.blueGrey)),
       const SizedBox(height:12),Wrap(spacing:7,runSpacing:7,children:[
-        for(final months in [1,3,6]) ChoiceChip(label:Text('Last $months month\${months==1?'':'s'}'),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
+        for(final months in [1,3,6]) ChoiceChip(label:Text('Last $months month${months==1?'':'s'}'),selected:_reportCustomFrom==null&&_reportPeriodMonths==months,onSelected:(_){setState((){_reportPeriodMonths=months;_reportCustomFrom=null;_reportCustomTo=null;});}),
         OutlinedButton.icon(onPressed:_pickReportRange,icon:const Icon(Icons.date_range_rounded,size:18),label:const Text('Custom (6 months max)')),
       ]),
       const SizedBox(height:8),DropdownButtonFormField<String>(value:_reportDateBasis,isExpanded:true,decoration:const InputDecoration(labelText:'Report date basis',prefixIcon:Icon(Icons.event_available_rounded),border:OutlineInputBorder(),contentPadding:EdgeInsets.symmetric(horizontal:12,vertical:10)),items:const [DropdownMenuItem(value:'Booking Date',child:Text('Booking Date')),DropdownMenuItem(value:'Status Date',child:Text('Status Update Date')),DropdownMenuItem(value:'Delivery Date',child:Text('Delivery Date'))],onChanged:(v){if(v!=null)setState(()=>_reportDateBasis=v);}),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportCityFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'City filter', prefixIcon: Icon(Icons.location_city_rounded), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All cities')), ...allCities.map((city) => DropdownMenuItem(value: city, child: Text(city, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportCityFilter = v); },
+      ),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportWorkerFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'Worker filter', prefixIcon: Icon(Icons.badge_outlined), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All workers')), ...allWorkers.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportWorkerFilter = v); },
+      ),
+      const SizedBox(height:8),
+      DropdownButtonFormField<String>(
+        value: _reportStatusFilter,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'Status filter', prefixIcon: Icon(Icons.local_shipping_outlined), border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        items: [const DropdownMenuItem(value: 'All', child: Text('All statuses')), ...allStatuses.map((s) => DropdownMenuItem(value: s, child: Text(s, overflow: TextOverflow.ellipsis)))],
+        onChanged: (v) { if (v != null) setState(() => _reportStatusFilter = v); },
+      ),
       const SizedBox(height:12),
       if(total==0) const Padding(padding:EdgeInsets.symmetric(vertical:12),child:Text('Is date range/date basis ke liye orders nahi mile. Booking dates ya filters check karein.',style:TextStyle(color:Colors.blueGrey)))
       else ...[
@@ -2459,7 +2511,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height:16),const Text('Top Cities by Order Volume',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...cityEntries.take(10).map((e)=>_reportBar(e.key,e.value.length,maxCity,const Color(0xFF087A46))),
         const SizedBox(height:8),const Text('Status Breakdown',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),...statusEntries.take(8).map((e)=>_reportBar(e.key,e.value,maxStatus,const Color(0xFF1769E0))),
         const SizedBox(height:8),const Text('Worker Performance',style:TextStyle(fontSize:15,fontWeight:FontWeight.w900)),const SizedBox(height:10),
-        ...workerEntries.take(10).map((e){final items=e.value,d=items.where(_reportIsDelivered).length,r=items.where(_reportIsReturned).length,rate=items.isEmpty?0:(d*100/items.length).round(),name=workerNames[e.key]??e.key;return Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(name,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.w800))),Text('\${items.length} orders',style:const TextStyle(fontSize:11,fontWeight:FontWeight.w800))]),const SizedBox(height:5),Text('Delivered $d • Returned $r • Delivery rate $rate%',style:const TextStyle(fontSize:11,color:Colors.blueGrey))]));}),
+        ...workerEntries.take(10).map((e){final items=e.value,d=items.where(_reportIsDelivered).length,r=items.where(_reportIsReturned).length,rate=items.isEmpty?0:(d*100/items.length).round(),name=workerNames[e.key]??e.key;return Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(12)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(name,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.w800))),Text('${items.length} orders',style:const TextStyle(fontSize:11,fontWeight:FontWeight.w800))]),const SizedBox(height:5),Text('Delivered $d • Returned $r • Delivery rate $rate%',style:const TextStyle(fontSize:11,color:Colors.blueGrey))]));}),
       ],
       const Divider(height:24),Wrap(spacing:8,runSpacing:8,children:[
         FilledButton.icon(onPressed:reportOrders.isEmpty?null:()=>_exportReportCsv(reportOrders),icon:const Icon(Icons.file_download_outlined),label:const Text('Export CSV'),style:FilledButton.styleFrom(backgroundColor:const Color(0xFF087A46),foregroundColor:Colors.white)),
