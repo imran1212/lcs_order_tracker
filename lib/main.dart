@@ -13,6 +13,9 @@ import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 
+String _normalizeLcsCn(String value) =>
+    value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+
 // LCS_BACKGROUND_AUTO_SYNC_V2
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
 const String _lcsBulkSyncTask = 'lcsOrderBulkSync';
@@ -4439,8 +4442,7 @@ Future<void> _loadWorkerName() async {
     });
   }
 
-  String _normalizeCn(String value) =>
-      value.trim().toUpperCase().replaceAll(RegExp(r'\\s+'), '');
+  String _normalizeCn(String value) => _normalizeLcsCn(value);
 
   String _cnRegistryId(String cn) => _normalizeCn(cn);
 
