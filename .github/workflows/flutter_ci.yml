@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/background-sync-v1.0.5
-      - feature/lcs-v1.0.8-reports-export
-      - feature/aqas-package-presubmit
-      - feature/pre-release-security-hardening
     paths:
       - "lib/**"
       - "test/**"
@@ -41,7 +37,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lcs-flutter-${{ github.ref }}
+  group: lcs-flutter-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
