@@ -1155,7 +1155,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final data = order.data();
         final rawCn = (data['cn'] ?? '').toString();
         final cn = _normalizeLcsCn(rawCn);
-        if (!RegExp(r'^[A-Z0-9._-]{1,100}
+        if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) continue;
+        // CN is immutable under the hardened rules. Do not create a registry
+        // entry whose normalized CN differs from the linked legacy order.
+        if (rawCn != cn) {
+          skippedNonCanonicalCn++;
+          debugPrint('CN registry backfill skipped non-canonical CN on order ' + order.id + '.');
+          continue;
+        }
+        if (!seen.add(cn)) continue;
+        final registryRef = db.collection('cnRegistry').doc(cn);
         await db.runTransaction((transaction) async {
           final existing = await transaction.get(registryRef);
           if (!existing.exists) {
@@ -1182,7 +1191,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       debugPrint('CN registry backfill incomplete: $error');
     }
   }
-
   @override
   void initState() {
     super.initState();
