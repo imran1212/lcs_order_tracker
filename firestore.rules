@@ -129,7 +129,7 @@ service cloud.firestore {
            (!request.resource.data.keys().hasAny(['matchedOrders']) ||
              (request.resource.data.matchedOrders is int && request.resource.data.matchedOrders >= 0)) &&
            (!request.resource.data.keys().hasAny(['matchedTrackingNumbers']) ||
-             (request.resource.data.matchedTrackingNumbers is int && request.resource.data.matchedTrackingNumbers >= 0)));
+             (request.resource.data.matchedTrackingNumbers is int && request.resource.data.matchedTrackingNumbers >= 0))));
 
       allow delete: if isAdmin();
 
