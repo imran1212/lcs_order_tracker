@@ -16,8 +16,7 @@ service cloud.firestore {
 
     function activeUser() {
       return hasProfile() &&
-        get(profilePath(request.auth.uid)).data.get('active', true) != false &&
-        get(profilePath(request.auth.uid)).data.get('active', true) != 'false';
+        get(profilePath(request.auth.uid)).data.get('active', false) == true;
     }
 
     function isAdmin() {
@@ -33,26 +32,32 @@ service cloud.firestore {
       return activeUser() && (isAdmin() || ownsOrderData(data));
     }
 
+    function validCn(cn) {
+      return cn is string && cn.matches('^[A-Z0-9._-]{1,100}$');
+    }
+
     function hasCnReservation(cn, orderId) {
-      return cn is string &&
-        cn.matches('^[A-Z0-9._-]{1,100}$') &&
+      return validCn(cn) &&
         existsAfter(/databases/$(database)/documents/cnRegistry/$(cn)) &&
         getAfter(/databases/$(database)/documents/cnRegistry/$(cn)).data.get('cn', '') == cn &&
         getAfter(/databases/$(database)/documents/cnRegistry/$(cn)).data.get('orderId', '') == orderId;
+    }
+
+    function parentOrderData() {
+      return get(/databases/$(database)/documents/orders/$(orderId)).data;
     }
 
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
 
-      // Worker profiles are provisioned by an authenticated admin only.
+      // Admins can provision worker profiles but cannot promote a worker through an update.
       allow create: if isAdmin() &&
         request.resource.data.get('role', '') == 'worker' &&
-        request.resource.data.get('active', true) == true;
+        request.resource.data.get('active', false) == true;
       allow update: if isAdmin() &&
         request.resource.data.get('role', '') == resource.data.get('role', '');
-      allow delete: if isAdmin() &&
-        resource.data.get('role', '') == 'worker';
+      allow delete: if isAdmin() && resource.data.get('role', '') == 'worker';
     }
 
     match /orders/{orderId} {
@@ -62,39 +67,61 @@ service cloud.firestore {
         hasCnReservation(request.resource.data.get('cn', ''), orderId) &&
         (isAdmin() || ownsOrderData(request.resource.data));
 
+      // CN and assignment are immutable after creation. Changing a CN requires a
+      // dedicated atomic reservation migration, not a normal edit.
       allow update: if activeUser() &&
-        (isAdmin() ||
-          (ownsOrderData(resource.data) &&
-           ownsOrderData(request.resource.data)));
+        request.resource.data.get('cn', '') == resource.data.get('cn', '') &&
+        request.resource.data.get('workerUid', '') == resource.data.get('workerUid', '') &&
+        (isAdmin() || ownsOrderData(resource.data));
 
-      // The app's UI reserves permanent order deletion for admins.
       allow delete: if isAdmin();
 
       match /lcsStatusHistory/{eventId} {
-        allow get, list: if canReadOrderData(
-          get(/databases/$(database)/documents/orders/$(orderId)).data
-        );
+        allow get, list: if canReadOrderData(parentOrderData());
 
-        // Keep tracking history append-only for audit integrity.
+        // History is append-only; an existing event can never be rewritten/deleted.
         allow create: if activeUser() &&
-          (isAdmin() ||
-            ownsOrderData(getAfter(/databases/$(database)/documents/orders/$(orderId)).data));
-        allow update: if activeUser() &&
-          (isAdmin() ||
-            ownsOrderData(get(/databases/$(database)/documents/orders/$(orderId)).data));
-        allow delete: if isAdmin();
+          (isAdmin() || ownsOrderData(getAfter(
+            /databases/$(database)/documents/orders/$(orderId)
+          ).data));
+        allow update, delete: if false;
       }
     }
 
     match /syncJobs/{jobId} {
       allow get, list: if activeUser() &&
         (isAdmin() || resource.data.get('ownerUid', '') == request.auth.uid);
+
       allow create: if activeUser() &&
-        (isAdmin() || request.resource.data.get('ownerUid', '') == request.auth.uid);
+        request.resource.data.get('jobId', '') == jobId &&
+        request.resource.data.get('ownerUid', '') == request.auth.uid &&
+        request.resource.data.get('isAdmin', false) == isAdmin() &&
+        request.resource.data.get('status', '') == 'queued' &&
+        request.resource.data.get('total', 0) is int &&
+        request.resource.data.get('total', 0) > 0 &&
+        request.resource.data.get('completed', -1) == 0 &&
+        request.resource.data.get('successful', -1) == 0 &&
+        request.resource.data.get('failed', -1) == 0;
+
       allow update: if activeUser() &&
         (isAdmin() ||
           (resource.data.get('ownerUid', '') == request.auth.uid &&
-           request.resource.data.get('ownerUid', '') == resource.data.get('ownerUid', '')));
+           request.resource.data.get('ownerUid', '') == resource.data.get('ownerUid', '') &&
+           request.resource.data.get('jobId', '') == resource.data.get('jobId', '') &&
+           request.resource.data.get('total', -1) == resource.data.get('total', -2) &&
+           request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'completed', 'successful', 'failed', 'status', 'updatedAt', 'finishedAt'
+           ]) &&
+           request.resource.data.get('completed', -1) is int &&
+           request.resource.data.get('successful', -1) is int &&
+           request.resource.data.get('failed', -1) is int &&
+           request.resource.data.completed >= resource.data.get('completed', 0) &&
+           request.resource.data.completed <= resource.data.get('total', 0) &&
+           request.resource.data.successful + request.resource.data.failed ==
+             request.resource.data.completed &&
+           request.resource.data.status in ['queued', 'running', 'completed', 'failed']));
+
       allow delete: if isAdmin();
 
       match /items/{itemId} {
@@ -103,14 +130,24 @@ service cloud.firestore {
             (isAdmin() ||
               get(/databases/$(database)/documents/syncJobs/$(jobId)).data.get('ownerUid', '') == request.auth.uid);
         }
+
         function ownsParentJobAfter() {
           return activeUser() &&
             (isAdmin() ||
               getAfter(/databases/$(database)/documents/syncJobs/$(jobId)).data.get('ownerUid', '') == request.auth.uid);
         }
+
         allow get, list: if ownsParentJob();
-        allow create: if ownsParentJobAfter();
-        allow update: if ownsParentJob();
+        allow create: if ownsParentJobAfter() &&
+          request.resource.data.get('cn', '') is string &&
+          request.resource.data.get('status', '') == 'pending';
+        allow update: if ownsParentJob() &&
+          request.resource.data.get('cn', '') == resource.data.get('cn', '') &&
+          request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'error', 'completedAt'
+          ]) &&
+          request.resource.data.get('status', '') in ['pending', 'success', 'failed'];
         allow delete: if isAdmin();
       }
     }
@@ -122,19 +159,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // A CN can be reserved only once; clients cannot overwrite reservations.
+    // CN reservations are write-once for clients; only admins may release one
+    // as part of an authorized order deletion.
     match /cnRegistry/{cnKey} {
       allow get: if activeUser();
       allow list: if false;
       allow create: if activeUser() &&
+        validCn(cnKey) &&
         !exists(/databases/$(database)/documents/cnRegistry/$(cnKey)) &&
         request.resource.data.get('cn', '') == cnKey &&
-        (isAdmin() || request.resource.data.get('workerUid', '') == request.auth.uid);
+        request.resource.data.get('orderId', '') is string &&
+        request.resource.data.get('workerUid', '') == request.auth.uid &&
+        (isAdmin() || request.resource.data.get('createdBy', '') == request.auth.uid);
       allow update: if false;
       allow delete: if isAdmin();
     }
 
-    // Deny every unrecognized collection and document path by default.
     match /{document=**} {
       allow read, write: if false;
     }
