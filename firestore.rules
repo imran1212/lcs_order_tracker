@@ -111,7 +111,8 @@ service cloud.firestore {
            request.resource.data.get('total', -1) == resource.data.get('total', -2) &&
            request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-             'completed', 'successful', 'failed', 'status', 'updatedAt', 'finishedAt'
+             'completed', 'successful', 'failed', 'status', 'updatedAt', 'finishedAt',
+             'stage', 'startedAt', 'matchedOrders', 'matchedTrackingNumbers', 'lastError'
            ]) &&
            request.resource.data.get('completed', -1) is int &&
            request.resource.data.get('successful', -1) is int &&
@@ -120,7 +121,15 @@ service cloud.firestore {
            request.resource.data.completed <= resource.data.get('total', 0) &&
            request.resource.data.successful + request.resource.data.failed ==
              request.resource.data.completed &&
-           request.resource.data.status in ['queued', 'running', 'completed', 'failed']));
+           request.resource.data.status in ['queued', 'running', 'completed', 'failed', 'error'] &&
+           (!request.resource.data.keys().hasAny(['stage']) ||
+             (request.resource.data.stage is string && request.resource.data.stage.size() <= 80)) &&
+           (!request.resource.data.keys().hasAny(['lastError']) ||
+             (request.resource.data.lastError is string && request.resource.data.lastError.size() <= 1000)) &&
+           (!request.resource.data.keys().hasAny(['matchedOrders']) ||
+             (request.resource.data.matchedOrders is int && request.resource.data.matchedOrders >= 0)) &&
+           (!request.resource.data.keys().hasAny(['matchedTrackingNumbers']) ||
+             (request.resource.data.matchedTrackingNumbers is int && request.resource.data.matchedTrackingNumbers >= 0)));
 
       allow delete: if isAdmin();
 
