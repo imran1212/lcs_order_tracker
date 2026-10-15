@@ -169,6 +169,11 @@ service cloud.firestore {
         !exists(/databases/$(database)/documents/cnRegistry/$(cnKey)) &&
         request.resource.data.get('cn', '') == cnKey &&
         request.resource.data.get('orderId', '') is string &&
+        request.resource.data.get('orderId', '') != '' &&
+        existsAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)) &&
+        getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.get('cn', '') == cnKey &&
+        getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.get('workerUid', '') ==
+          request.resource.data.get('workerUid', '') &&
         (isAdmin() || request.resource.data.get('workerUid', '') == request.auth.uid) &&
         request.resource.data.get('createdBy', '') == request.auth.uid;
       allow update: if false;
