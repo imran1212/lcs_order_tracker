@@ -4450,6 +4450,42 @@ Future<void> _loadWorkerName() async {
   DocumentReference<Map<String, dynamic>> _cnRegistryRef(String cn) =>
       FirebaseFirestore.instance.collection('cnRegistry').doc(_cnRegistryId(cn));
 
+  Future<void> _showDuplicateCnAlert(String cn) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 36),
+        title: const Text('Duplicate Order'),
+        content: Text('CN $cn pehle se saved hai. Is CN ka naya order create nahi kiya gaya.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showOrderSaveError(String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.error_outline_rounded, color: Colors.red, size: 36),
+        title: const Text('Order Save Failed'),
+        content: SelectableText(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<List<String>> _findExistingCnNumbers(Iterable<String> values) async {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) throw StateError('Pehle app mein login karein.');
@@ -4502,9 +4538,7 @@ Future<void> _loadWorkerName() async {
       final existingCns = await _findExistingCnNumbers(normalizedCns);
       if (existingCns.isNotEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ye CN pehle se saved hain: ${existingCns.join(', ')}. Duplicate orders save nahi huay.')),
-        );
+        await _showDuplicateCnAlert(existingCns.join(', '));
         return;
       }
       final db = FirebaseFirestore.instance;
@@ -4573,9 +4607,12 @@ Future<void> _loadWorkerName() async {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
-      );
+      final message = e.toString();
+      if (message.contains('CN pehle se reserved hai:')) {
+        await _showDuplicateCnAlert(message.replaceFirst('Bad state: CN pehle se reserved hai: ', ''));
+      } else {
+        await _showOrderSaveError('Bulk orders save nahi huay. Details: $message');
+      }
     }
   }
 
@@ -4605,9 +4642,7 @@ Future<void> _loadWorkerName() async {
       final existingCns = await _findExistingCnNumbers([cn]);
       if (existingCns.isNotEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('CN $cn pehle se saved hai. Duplicate order create nahi hua.')),
-        );
+        await _showDuplicateCnAlert(cn);
         return;
       }
       // Atomic CN reservation prevents two concurrent saves from creating the same CN.
@@ -4707,9 +4742,12 @@ Future<void> _loadWorkerName() async {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order save nahi hua: $e')),
-      );
+      final message = e.toString();
+      if (message.contains('pehle se reserved')) {
+        await _showDuplicateCnAlert(cnController.text.trim().toUpperCase());
+      } else {
+        await _showOrderSaveError('Order save nahi hua. Details: $message');
+      }
     }
   }
 
