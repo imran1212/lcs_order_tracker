@@ -218,3 +218,27 @@ test('sync job creation validates ownership and initial counters', async () => {
     total: 2, completed: 1, successful: 1, failed: 0,
   }));
 });
+
+test('sync job owner can update worker-written metadata and error state', async () => {
+  const db = testEnv.authenticatedContext('worker-a').firestore();
+  const jobRef = doc(db, 'syncJobs/job-metadata');
+  await assertSucceeds(setDoc(jobRef, {
+    jobId: 'job-metadata', ownerUid: 'worker-a', isAdmin: false, status: 'queued',
+    total: 2, completed: 0, successful: 0, failed: 0,
+  }));
+  await assertSucceeds(updateDoc(jobRef, {
+    status: 'running',
+    stage: 'query_orders',
+    startedAt: new Date(),
+    matchedOrders: 2,
+    matchedTrackingNumbers: 2,
+    updatedAt: new Date(),
+  }));
+  await assertSucceeds(updateDoc(jobRef, {
+    status: 'error',
+    stage: 'query_orders',
+    lastError: 'Test error state',
+    updatedAt: new Date(),
+  }));
+  await assertFails(updateDoc(jobRef, { unexpectedSecret: 'not allowed' }));
+});
