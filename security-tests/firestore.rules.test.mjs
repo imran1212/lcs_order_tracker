@@ -55,6 +55,12 @@ before(async () => {
     await setDoc(doc(db, 'syncJobs/job-b'), {
       ownerUid: 'worker-b', status: 'running',
     });
+    await setDoc(doc(db, 'syncJobs/job-disabled'), {
+      ownerUid: 'worker-disabled', status: 'running',
+    });
+    await setDoc(doc(db, 'orders/order-a/lcsStatusHistory/initial'), {
+      status: 'In Transit', source: 'test',
+    });
   });
 });
 
@@ -145,4 +151,52 @@ test('CN registry allows one owner reservation and blocks a duplicate reservatio
     cn: 'QL1234', orderId: 'order-registry-b', workerUid: 'worker-b', createdBy: 'worker-b',
   }));
   await assertFails(updateDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), { orderId: 'tampered' }));
+});
+
+
+test('CN and worker assignment cannot be changed through order edit', async () => {
+  const worker = testEnv.authenticatedContext('worker-a').firestore();
+  const admin = testEnv.authenticatedContext('admin-1').firestore();
+  await assertFails(updateDoc(doc(worker, 'orders/order-a'), { cn: 'CN-A-CHANGED' }));
+  await assertFails(updateDoc(doc(admin, 'orders/order-a'), { cn: 'CN-A-CHANGED' }));
+  await assertFails(updateDoc(doc(admin, 'orders/order-a'), { workerUid: 'worker-b' }));
+  await assertSucceeds(updateDoc(doc(worker, 'orders/order-a'), { customer: 'Updated customer' }));
+});
+
+test('status history is append-only for workers and admins', async () => {
+  const worker = testEnv.authenticatedContext('worker-a').firestore();
+  const admin = testEnv.authenticatedContext('admin-1').firestore();
+  const event = doc(worker, 'orders/order-a/lcsStatusHistory/initial');
+  await assertFails(updateDoc(event, { status: 'Tampered' }));
+  await assertFails(deleteDoc(event));
+  await assertFails(updateDoc(doc(admin, 'orders/order-a/lcsStatusHistory/initial'), { status: 'Tampered' }));
+  await assertFails(deleteDoc(doc(admin, 'orders/order-a/lcsStatusHistory/initial')));
+  await assertSucceeds(setDoc(doc(worker, 'orders/order-a/lcsStatusHistory/new-event'), {
+    status: 'Out for Delivery', source: 'test',
+  }));
+});
+
+test('inactive worker cannot access sync jobs or create CN reservations', async () => {
+  const disabled = testEnv.authenticatedContext('worker-disabled').firestore();
+  await assertFails(getDoc(doc(disabled, 'syncJobs/job-disabled')));
+  await assertFails(setDoc(doc(disabled, 'cnRegistry/INACTIVE-1'), {
+    cn: 'INACTIVE-1', orderId: 'inactive-order', workerUid: 'worker-disabled',
+    createdBy: 'worker-disabled',
+  }));
+});
+
+test('sync job creation validates ownership and initial counters', async () => {
+  const worker = testEnv.authenticatedContext('worker-a').firestore();
+  await assertSucceeds(setDoc(doc(worker, 'syncJobs/job-valid'), {
+    jobId: 'job-valid', ownerUid: 'worker-a', isAdmin: false, status: 'queued',
+    total: 2, completed: 0, successful: 0, failed: 0,
+  }));
+  await assertFails(setDoc(doc(worker, 'syncJobs/job-invalid-owner'), {
+    jobId: 'job-invalid-owner', ownerUid: 'worker-b', isAdmin: false, status: 'queued',
+    total: 2, completed: 0, successful: 0, failed: 0,
+  }));
+  await assertFails(setDoc(doc(worker, 'syncJobs/job-invalid-counts'), {
+    jobId: 'job-invalid-counts', ownerUid: 'worker-a', isAdmin: false, status: 'queued',
+    total: 2, completed: 1, successful: 1, failed: 0,
+  }));
 });
