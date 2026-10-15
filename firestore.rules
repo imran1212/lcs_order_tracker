@@ -169,8 +169,8 @@ service cloud.firestore {
         !exists(/databases/$(database)/documents/cnRegistry/$(cnKey)) &&
         request.resource.data.get('cn', '') == cnKey &&
         request.resource.data.get('orderId', '') is string &&
-        request.resource.data.get('workerUid', '') == request.auth.uid &&
-        (isAdmin() || request.resource.data.get('createdBy', '') == request.auth.uid);
+        (isAdmin() || request.resource.data.get('workerUid', '') == request.auth.uid) &&
+        request.resource.data.get('createdBy', '') == request.auth.uid;
       allow update: if false;
       allow delete: if isAdmin();
     }
