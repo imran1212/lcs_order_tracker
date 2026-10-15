@@ -144,13 +144,24 @@ test('unauthenticated clients cannot read orders', async () => {
 test('CN registry allows one owner reservation and blocks a duplicate reservation', async () => {
   const workerA = testEnv.authenticatedContext('worker-a').firestore();
   const workerB = testEnv.authenticatedContext('worker-b').firestore();
-  await assertSucceeds(setDoc(doc(workerA, 'cnRegistry/QL1234'), {
+  const first = writeBatch(workerA);
+  first.set(doc(workerA, 'cnRegistry/QL1234'), {
     cn: 'QL1234', orderId: 'order-registry-a', workerUid: 'worker-a', createdBy: 'worker-a',
-  }));
-  await assertFails(setDoc(doc(workerB, 'cnRegistry/QL1234'), {
+  });
+  first.set(doc(workerA, 'orders/order-registry-a'), {
+    cn: 'QL1234', workerUid: 'worker-a', status: 'Pending API Sync',
+  });
+  await assertSucceeds(first.commit());
+
+  const duplicate = writeBatch(workerB);
+  duplicate.set(doc(workerB, 'cnRegistry/QL1234'), {
     cn: 'QL1234', orderId: 'order-registry-b', workerUid: 'worker-b', createdBy: 'worker-b',
-  }));
-  await assertFails(updateDoc(doc(workerA, 'cnRegistry/Q04xMjM0'), { orderId: 'tampered' }));
+  });
+  duplicate.set(doc(workerB, 'orders/order-registry-b'), {
+    cn: 'QL1234', workerUid: 'worker-b', status: 'Pending API Sync',
+  });
+  await assertFails(duplicate.commit());
+  await assertFails(updateDoc(doc(workerA, 'cnRegistry/QL1234'), { orderId: 'tampered' }));
 });
 
 
