@@ -3910,7 +3910,7 @@ class _EditOrderSheetState extends State<EditOrderSheet> {
           const SizedBox(height: 16),
           _field(controller: customerController, label: 'Customer Name', icon: Icons.person_outline_rounded),
           _field(controller: customerPhoneController, label: 'Customer Contact Number', icon: Icons.phone_outlined, keyboardType: TextInputType.phone),
-          _field(controller: cnController, label: 'LCS CN Number', icon: Icons.qr_code_2_rounded),
+          _field(controller: cnController, label: 'LCS CN Number (locked)', icon: Icons.qr_code_2_rounded, readOnly: true),
           _field(controller: productController, label: 'Product', icon: Icons.shopping_bag_outlined),
           _field(controller: amountController, label: 'COD Amount', icon: Icons.payments_outlined, keyboardType: TextInputType.number),
           _field(controller: destinationController, label: 'Destination', icon: Icons.location_on_outlined),
