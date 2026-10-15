@@ -185,6 +185,13 @@ test('inactive worker cannot access sync jobs or create CN reservations', async 
   }));
 });
 
+test('cannot reserve a CN without a matching order in the same write', async () => {
+  const worker = testEnv.authenticatedContext('worker-a').firestore();
+  await assertFails(setDoc(doc(worker, 'cnRegistry/ORPHAN-1'), {
+    cn: 'ORPHAN-1', orderId: 'missing-order', workerUid: 'worker-a', createdBy: 'worker-a',
+  }));
+});
+
 test('sync job creation validates ownership and initial counters', async () => {
   const worker = testEnv.authenticatedContext('worker-a').firestore();
   await assertSucceeds(setDoc(doc(worker, 'syncJobs/job-valid'), {
