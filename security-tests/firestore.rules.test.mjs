@@ -219,6 +219,37 @@ test('sync job creation validates ownership and initial counters', async () => {
   }));
 });
 
+
+test('admin can backfill a CN reservation for an existing canonical legacy order', async () => {
+  const admin = testEnv.authenticatedContext('admin-1').firestore();
+  // Mirrors _backfillCnRegistry(): the existing order is not rewritten.
+  await assertSucceeds(setDoc(doc(admin, 'cnRegistry/CN-A-1001'), {
+    cn: 'CN-A-1001',
+    orderId: 'order-a',
+    workerUid: 'worker-a',
+    createdBy: 'admin-1',
+    source: 'legacy_backfill',
+  }));
+});
+
+test('CN registry backfill rejects a non-canonical legacy order CN', async () => {
+  const admin = testEnv.authenticatedContext('admin-1').firestore();
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'orders/order-legacy-spaced'), {
+      cn: ' cn-legacy-3 ', workerUid: 'worker-a', status: 'In Transit',
+    });
+  });
+  // The migration must not reserve a normalized CN while the linked order
+  // still stores a different raw CN value; that needs a deliberate data migration.
+  await assertFails(setDoc(doc(admin, 'cnRegistry/CN-LEGACY-3'), {
+    cn: 'CN-LEGACY-3',
+    orderId: 'order-legacy-spaced',
+    workerUid: 'worker-a',
+    createdBy: 'admin-1',
+    source: 'legacy_backfill',
+  }));
+});
+
 test('sync job owner can update worker-written metadata and error state', async () => {
   const db = testEnv.authenticatedContext('worker-a').firestore();
   const jobRef = doc(db, 'syncJobs/job-metadata');
