@@ -1,4 +1,4 @@
-package com.example.lcs_order_tracker
+package pk.aqas.lcstracker
 
 import io.flutter.embedding.android.FlutterActivity
 

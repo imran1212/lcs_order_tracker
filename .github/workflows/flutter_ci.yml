@@ -10,11 +10,35 @@ on:
       - "pubspec.yaml"
       - "pubspec.lock"
       - "android/**"
+      - "worker.js"
+      - "firestore.rules"
+      - "firebase.json"
+      - "wrangler.toml"
+      - "security-tests/**"
+      - ".github/workflows/flutter_ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "lib/**"
+      - "test/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "android/**"
+      - "worker.js"
+      - "firestore.rules"
+      - "firebase.json"
+      - "wrangler.toml"
+      - "security-tests/**"
       - ".github/workflows/flutter_ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: lcs-flutter-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify-and-build:
@@ -30,22 +54,40 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Validate Cloudflare Worker syntax
+        run: node --input-type=module --check < worker.js
+
+      - name: Validate Firebase rules config
+        run: node -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('firebase.json','utf8')); if(!c.firestore || c.firestore.rules !== 'firestore.rules') process.exit(1)"
+
+      - name: Set up Java 21 for Firebase emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Firestore rules test dependencies
+        run: npm install --prefix security-tests --no-audit --no-fund
+
+      - name: Test Firestore security rules in emulator
+        run: npx --yes firebase-tools emulators:exec --only firestore --project demo-lcs-tracker "node --test security-tests/firestore.rules.test.mjs"
+
       - name: Resolve dependencies
         run: flutter pub get
 
       - name: Analyze Dart and Flutter source
         run: flutter analyze --no-pub --no-fatal-infos
 
-      - name: Run LCS status classification tests
+      - name: Run tests
         run: flutter test --no-pub
 
-      - name: Build release APK for device testing
+      - name: Build release-mode APK for device testing (debug-signed)
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
-      - name: Upload test APK
+      - name: Upload QA APK
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-arm64-near-final-test-apk
+          name: LCS-Tracker-AQAS-QA-APK
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
