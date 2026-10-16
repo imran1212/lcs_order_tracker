@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="104" fill="#123B2A"/>
+  <path d="M116 188 256 112 396 188 256 266Z" fill="#F8FAFC"/>
+  <path d="M116 188v148l140 78V266Z" fill="#E8F2EB"/>
+  <path d="M396 188v148l-140 78V266Z" fill="#B7DCC5"/>
+  <path d="M116 188 256 266 396 188" fill="none" stroke="#123B2A" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M256 266v148" fill="none" stroke="#123B2A" stroke-width="12"/>
+  <path d="M170 214 256 261 342 214" fill="none" stroke="#123B2A" stroke-width="9" stroke-linejoin="round"/>
+  <circle cx="354" cy="112" r="45" fill="#F4C542"/>
+  <path d="M338 112h32m-16-16v32" stroke="#123B2A" stroke-width="9" stroke-linecap="round"/>
+  <text x="256" y="470" font-family="Arial,sans-serif" font-size="28" font-weight="700" text-anchor="middle" fill="#FFFFFF">LCS TRACKER</text>
+</svg>
