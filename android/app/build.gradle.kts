@@ -1,3 +1,9 @@
+plugins {
+    id("com.android.application")
+    id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
+}
+
 val aqasUploadStoreFile = providers.gradleProperty("AQAS_UPLOAD_STORE_FILE").orNull
     ?: System.getenv("AQAS_UPLOAD_STORE_FILE")
 val aqasUploadStorePassword = providers.gradleProperty("AQAS_UPLOAD_STORE_PASSWORD").orNull
@@ -20,12 +26,6 @@ if (gradle.startParameter.taskNames.any { it.contains("bundleRelease", ignoreCas
         "Google Play AAB builds require AQAS_UPLOAD_STORE_FILE, AQAS_UPLOAD_STORE_PASSWORD, " +
             "AQAS_UPLOAD_KEY_ALIAS, and AQAS_UPLOAD_KEY_PASSWORD. QA APKs may use debug signing."
     )
-}
-
-plugins {
-    id("com.android.application")
-    id("dev.flutter.flutter-gradle-plugin")
-    id("com.google.gms.google-services")
 }
 
 android {
