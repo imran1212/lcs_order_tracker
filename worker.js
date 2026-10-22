@@ -38,6 +38,46 @@ export default {
         console.error("Required Worker configuration is missing.");
         return json({ error: "Server configuration error." }, 500, cors);
       }
+      // AQAS Food Mart uses this same Worker URL and the same Leopards API credentials,
+      // but authenticates against its own Firebase project. It does courier lookup only;
+      // the AQAS app writes the result to its own Firestore order document.
+      if (url.pathname === "/aqas-track") {
+        if (!env.AQAS_FIREBASE_PROJECT_ID) {
+          console.error("AQAS_FIREBASE_PROJECT_ID is not configured.");
+          return json({ error: "AQAS tracking authentication is not configured." }, 500, cors);
+        }
+        const auth = request.headers.get("Authorization") || "";
+        const match = auth.match(/^Bearer\s+(.+)$/i);
+        if (!match) return json({ error: "Missing Firebase ID token." }, 401, cors);
+        const user = await verifyFirebaseToken(match[1].trim(), env.AQAS_FIREBASE_PROJECT_ID);
+        if (!user) return json({ error: "Invalid or expired AQAS Firebase token." }, 401, cors);
+        const contentType = request.headers.get("Content-Type") || "";
+        if (!contentType.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json." }, 415, cors);
+        const raw = await request.text();
+        if (raw.length > 8000) return json({ error: "Request body too large." }, 413, cors);
+        let body;
+        try { body = JSON.parse(raw); } catch { return json({ error: "Invalid JSON body." }, 400, cors); }
+        if (!body || !Array.isArray(body.track_numbers) || body.track_numbers.length !== 1) {
+          return json({ error: "Send exactly one CN number in track_numbers." }, 400, cors);
+        }
+        const numbers = body.track_numbers.map(v => typeof v === "string" ? v.trim() : "");
+        if (numbers.some(v => v.length < 4 || v.length > 40 || !/^[A-Za-z0-9-]+$/.test(v))) {
+          return json({ error: "Invalid CN number format." }, 400, cors);
+        }
+        const upstream = await fetch(LCS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({ api_key: env.LCS_API_KEY, api_password: env.LCS_API_PASSWORD, track_numbers: [...new Set(numbers)].join(",") })
+        });
+        const responseText = await upstream.text();
+        let result;
+        try { result = JSON.parse(responseText); }
+        catch { return json({ error: "LCS returned a non-JSON response.", upstream_status: upstream.status }, 502, cors); }
+        if (!upstream.ok) return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
+        console.log("AQAS courier proxy request accepted.", { uid: user.uid, requestedCount: numbers.length });
+        return json({ ok: true, courier: "Leopards", data: result }, 200, cors);
+      }
+
       // AQAS Food Mart uses the same Worker URL and same Leopards API credentials,
       // but its own Firebase database. This mode is authenticated with a separate
       // Cloudflare secret and performs courier lookup only (no Firestore access).
