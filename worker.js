@@ -31,6 +31,46 @@ export default {
       return handleLcsPush(request, env);
     }
 
+    // Dedicated shared-secret endpoint for AQAS Food Mart.
+    // It proxies courier lookups only and never reads or writes either app's Firestore.
+    if (url.pathname === "/aqas-track") {
+      if (request.method !== "POST") return json({ error: "Use POST for AQAS tracking." }, 405, cors);
+      if (!env.AQAS_TRACKING_SHARED_SECRET) {
+        console.error("AQAS tracking proxy secret is not configured.");
+        return json({ error: "AQAS tracking endpoint is not configured." }, 503, cors);
+      }
+      const supplied = request.headers.get("X-AQAS-Tracking-Secret") || "";
+      if (!constantTimeEqual(supplied, env.AQAS_TRACKING_SHARED_SECRET)) {
+        return json({ error: "Unauthorized." }, 401, cors);
+      }
+      try {
+        const raw = await request.text();
+        if (raw.length > 8000) return json({ error: "Request body too large." }, 413, cors);
+        const body = JSON.parse(raw);
+        if (!body || !Array.isArray(body.track_numbers) || body.track_numbers.length < 1 || body.track_numbers.length > MAX_CNS) {
+          return json({ error: `Send between 1 and ${MAX_CNS} CN numbers.` }, 400, cors);
+        }
+        const numbers = [...new Set(body.track_numbers.map(v => typeof v === "string" ? v.trim() : ""))];
+        if (numbers.some(v => v.length < 4 || v.length > 40 || !/^[A-Za-z0-9-]+$/.test(v))) {
+          return json({ error: "Invalid CN number format." }, 400, cors);
+        }
+        const upstream = await fetch(LCS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({ api_key: env.LCS_API_KEY, api_password: env.LCS_API_PASSWORD, track_numbers: numbers.join(",") })
+        });
+        const responseText = await upstream.text();
+        let result;
+        try { result = JSON.parse(responseText); }
+        catch { return json({ error: "LCS returned a non-JSON response." }, 502, cors); }
+        if (!upstream.ok) return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
+        return json(result, 200, cors);
+      } catch (error) {
+        console.error("AQAS tracking proxy failed:", error?.message || String(error));
+        return json({ error: "AQAS tracking request failed." }, 500, cors);
+      }
+    }
+
     if (request.method !== "POST") return json({ error: "Use POST for tracking." }, 405, cors);
 
     try {
