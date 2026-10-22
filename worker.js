@@ -43,7 +43,7 @@ export default {
       // This route performs courier lookup only; AQAS writes results to its own Firestore.
       if (url.pathname === "/aqas-track") {
         const auth = request.headers.get("Authorization") || "";
-        const match = auth.match(/^Bearer\\s+(.+)$/i);
+        const match = auth.match(/^Bearer\s+(.+)$/i);
         if (!match) return json({ error: "Missing Firebase ID token." }, 401, cors);
         const user = await verifyFirebaseToken(match[1].trim(), "aqas-food-mart");
         if (!user) return json({ error: "Invalid or expired AQAS Firebase token." }, 401, cors);
