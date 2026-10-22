@@ -31,22 +31,22 @@ export default {
       return handleLcsPush(request, env);
     }
 
-    // Dedicated shared-secret endpoint for AQAS Food Mart.
-    // It proxies courier lookups only and never reads or writes either app's Firestore.
-    if (url.pathname === "/aqas-track") {
-      if (request.method !== "POST") return json({ error: "Use POST for AQAS tracking." }, 405, cors);
-      if (!env.AQAS_TRACKING_SHARED_SECRET) {
-        console.error("AQAS tracking proxy secret is not configured.");
-        return json({ error: "AQAS tracking endpoint is not configured." }, 503, cors);
+    if (request.method !== "POST") return json({ error: "Use POST for tracking." }, 405, cors);
+
+    try {
+      if (!env.LCS_API_KEY || !env.LCS_API_PASSWORD || !env.FIREBASE_PROJECT_ID) {
+        console.error("Required Worker configuration is missing.");
+        return json({ error: "Server configuration error." }, 500, cors);
       }
-      const supplied = request.headers.get("X-AQAS-Tracking-Secret") || "";
-      if (!constantTimeEqual(supplied, env.AQAS_TRACKING_SHARED_SECRET)) {
-        return json({ error: "Unauthorized." }, 401, cors);
-      }
-      try {
+      // AQAS Food Mart uses the same Worker URL and same Leopards API credentials,
+      // but its own Firebase database. This mode is authenticated with a separate
+      // Cloudflare secret and performs courier lookup only (no Firestore access).
+      const aqasSecret = request.headers.get("X-AQAS-Tracking-Secret") || "";
+      if (env.AQAS_TRACKING_SHARED_SECRET && constantTimeEqual(aqasSecret, env.AQAS_TRACKING_SHARED_SECRET)) {
         const raw = await request.text();
         if (raw.length > 8000) return json({ error: "Request body too large." }, 413, cors);
-        const body = JSON.parse(raw);
+        let body;
+        try { body = JSON.parse(raw); } catch { return json({ error: "Invalid JSON body." }, 400, cors); }
         if (!body || !Array.isArray(body.track_numbers) || body.track_numbers.length < 1 || body.track_numbers.length > MAX_CNS) {
           return json({ error: `Send between 1 and ${MAX_CNS} CN numbers.` }, 400, cors);
         }
@@ -64,20 +64,10 @@ export default {
         try { result = JSON.parse(responseText); }
         catch { return json({ error: "LCS returned a non-JSON response." }, 502, cors); }
         if (!upstream.ok) return json({ error: "LCS tracking service returned an error.", upstream_status: upstream.status }, 502, cors);
+        console.log("AQAS courier proxy request accepted.", { requestedCount: body.track_numbers.length, uniqueCount: numbers.length });
         return json(result, 200, cors);
-      } catch (error) {
-        console.error("AQAS tracking proxy failed:", error?.message || String(error));
-        return json({ error: "AQAS tracking request failed." }, 500, cors);
       }
-    }
 
-    if (request.method !== "POST") return json({ error: "Use POST for tracking." }, 405, cors);
-
-    try {
-      if (!env.LCS_API_KEY || !env.LCS_API_PASSWORD || !env.FIREBASE_PROJECT_ID) {
-        console.error("Required Worker configuration is missing.");
-        return json({ error: "Server configuration error." }, 500, cors);
-      }
       const auth = request.headers.get("Authorization") || "";
       const match = auth.match(/^Bearer\s+(.+)$/i);
       if (!match) return json({ error: "Missing Firebase ID token." }, 401, cors);
