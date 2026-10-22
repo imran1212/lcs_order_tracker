@@ -42,14 +42,10 @@ export default {
       // but authenticates against its own Firebase project. It does courier lookup only;
       // the AQAS app writes the result to its own Firestore order document.
       if (url.pathname === "/aqas-track") {
-        if (!env.AQAS_FIREBASE_PROJECT_ID) {
-          console.error("AQAS_FIREBASE_PROJECT_ID is not configured.");
-          return json({ error: "AQAS tracking authentication is not configured." }, 500, cors);
-        }
         const auth = request.headers.get("Authorization") || "";
         const match = auth.match(/^Bearer\s+(.+)$/i);
         if (!match) return json({ error: "Missing Firebase ID token." }, 401, cors);
-        const user = await verifyFirebaseToken(match[1].trim(), env.AQAS_FIREBASE_PROJECT_ID);
+        const user = await verifyFirebaseToken(match[1].trim(), "aqas-food-mart");
         if (!user) return json({ error: "Invalid or expired AQAS Firebase token." }, 401, cors);
         const contentType = request.headers.get("Content-Type") || "";
         if (!contentType.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json." }, 415, cors);
