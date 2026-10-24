@@ -42,16 +42,16 @@ jobs:
       - name: Install approved upload keystore from GitHub Secrets
         shell: bash
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          KEYSTORE_BASE64: ${{ secrets.AQAS_UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.AQAS_UPLOAD_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.AQAS_UPLOAD_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.AQAS_UPLOAD_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_BASE64" || { echo "Missing ANDROID_UPLOAD_KEYSTORE_BASE64 secret"; exit 1; }
-          test -n "$STORE_PASSWORD" || { echo "Missing ANDROID_UPLOAD_KEYSTORE_PASSWORD secret"; exit 1; }
-          test -n "$KEY_PASSWORD" || { echo "Missing ANDROID_UPLOAD_KEY_PASSWORD secret"; exit 1; }
-          test -n "$KEY_ALIAS" || { echo "Missing ANDROID_UPLOAD_KEY_ALIAS secret"; exit 1; }
+          test -n "$KEYSTORE_BASE64" || { echo "Missing AQAS_UPLOAD_KEYSTORE_BASE64 secret"; exit 1; }
+          test -n "$STORE_PASSWORD" || { echo "Missing AQAS_UPLOAD_STORE_PASSWORD secret"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing AQAS_UPLOAD_KEY_PASSWORD secret"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing AQAS_UPLOAD_KEY_ALIAS secret"; exit 1; }
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
           cat > android/key.properties <<EOF
           storeFile=upload-keystore.jks
