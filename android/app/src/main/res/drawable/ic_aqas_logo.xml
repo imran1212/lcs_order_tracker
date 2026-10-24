@@ -4,29 +4,30 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- AQAS deep-green app tile -->
-    <path android:fillColor="#064E35" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#087A46" android:pathData="M0,0h108v58c-20,13 -38,17 -54,10C32,60 16,62 0,74z"/>
-    <path android:fillColor="#0E9F6E" android:pathData="M8,8h92v92h-92z" android:strokeColor="#35C98B" android:strokeWidth="1.5"/>
-    <!-- Route line and location pin -->
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M59,23 C73,20 79,29 72,37 S60,49 74,55"/>
-    <path android:fillColor="#E11D2E" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:pathData="M72,18 C65,18 61,23 61,29 C61,37 72,46 72,46 C72,46 83,36 83,29 C83,23 79,18 72,18z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M72,23a5,5 0,1 0,0.1 0z"/>
-    <!-- Parcel -->
-    <path android:fillColor="#F5C56B" android:strokeColor="#FFFFFF" android:strokeWidth="0.8" android:pathData="M62,57l18,-7 16,7 -18,8z"/>
-    <path android:fillColor="#D99A3D" android:pathData="M62,57l16,8v15l-16,-8z"/>
-    <path android:fillColor="#EAB354" android:pathData="M78,65l18,-8v15l-18,8z"/>
-    <path android:fillColor="#FFF0C2" android:pathData="M76,57l4,-2 4,2 -4,2z"/>
-    <!-- Delivery van/truck -->
-    <path android:fillColor="#FFFFFF" android:pathData="M10,39h35c3,0 5,2 5,5v20h-40z"/>
-    <path android:fillColor="#E8F4EF" android:pathData="M14,43h30v17h-30z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M50,49h13l9,10v10h-22z"/>
-    <path android:fillColor="#B9E7D3" android:pathData="M54,52h8l6,7h-14z"/>
-    <path android:fillColor="#FACC15" android:pathData="M10,61h40v4h-40z M50,65h22v4h-22z"/>
-    <path android:fillColor="#173B2E" android:pathData="M16,62a6,6 0,1 0,0.1 0z M58,68a6,6 0,1 0,0.1 0z"/>
-    <path android:fillColor="#D7F5E7" android:pathData="M16,62a3,3 0,1 0,0.1 0z M58,68a3,3 0,1 0,0.1 0z"/>
-    <!-- Bold LCS identity band -->
-    <path android:fillColor="#FACC15" android:pathData="M8,79h92v18h-92z"/>
-    <path android:fillColor="#D7192D" android:pathData="M8,79h92v4h-92z"/>
-    <path android:fillColor="#071A12" android:pathData="M18,84h4v9h-4z M25,84h3v9h-3z M31,84h4v3h-4z M31,89h4v4h-4z M38,84h4v9h-4z M45,84h4v9h-4z M52,84h4v3h-4z M52,89h4v4h-4z M59,84h4v9h-4z M66,84h4v9h-4z M73,84h4v3h-4z M73,89h4v4h-4z M80,84h4v9h-4z M87,84h4v9h-4z"/>
+    <!-- High-contrast AQAS green tile -->
+    <path android:fillColor="#063F2B" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#087A4B" android:pathData="M8,0h92c4.4,0 8,3.6 8,8v92c0,4.4 -3.6,8 -8,8h-92c-4.4,0 -8,-3.6 -8,-8v-92c0,-4.4 3.6,-8 8,-8z"/>
+    <path android:fillColor="#0D9961" android:pathData="M9,9h90v90h-90z"/>
+    <!-- Tracking route -->
+    <path android:fillColor="#00000000" android:strokeColor="#B8F4D5" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M29,25 C42,15 53,22 51,33 S37,49 48,57"/>
+    <path android:fillColor="#E11D2E" android:strokeColor="#FFFFFF" android:strokeWidth="1.5" android:pathData="M29,14 C21,14 16,20 16,27 C16,37 29,48 29,48 C29,48 42,37 42,27 C42,20 37,14 29,14z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M29,20a7,7 0,1 0,0.1 0z"/>
+    <path android:fillColor="#087A4B" android:pathData="M29,23a4,4 0,1 0,0.1 0z"/>
+    <!-- Parcel behind the van -->
+    <path android:fillColor="#FFE08A" android:pathData="M67,23l16,-7 15,7 -16,8z"/>
+    <path android:fillColor="#DCA63D" android:pathData="M67,23l15,8v17l-15,-8z"/>
+    <path android:fillColor="#F6C65E" android:pathData="M82,31l16,-8v17l-16,8z"/>
+    <path android:fillColor="#FFF4CC" android:pathData="M79,24l4,-2 4,2 -4,2z"/>
+    <!-- Bold delivery van -->
+    <path android:fillColor="#FFFFFF" android:pathData="M12,48h42c3,0 5,2 5,5v23h-47z"/>
+    <path android:fillColor="#D9F4E8" android:pathData="M17,53h32v17h-32z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M59,57h15l10,11v8h-25z"/>
+    <path android:fillColor="#B8E8D3" android:pathData="M64,61h8l6,7h-14z"/>
+    <path android:fillColor="#FACC15" android:pathData="M12,72h47v5h-47z M59,72h25v5h-25z"/>
+    <path android:fillColor="#063F2B" android:pathData="M24,73a7,7 0,1 0,0.1 0z M68,76a7,7 0,1 0,0.1 0z"/>
+    <path android:fillColor="#D8F7E7" android:pathData="M24,73a3.5,3.5 0,1 0,0.1 0z M68,76a3.5,3.5 0,1 0,0.1 0z"/>
+    <!-- AQAS signature stripe -->
+    <path android:fillColor="#FACC15" android:pathData="M8,86h92v13h-92z"/>
+    <path android:fillColor="#D7192D" android:pathData="M8,86h92v3h-92z"/>
+    <path android:fillColor="#073D2B" android:pathData="M17,91h4v5h-4z M24,91h3v5h-3z M30,91h4v2h-4z M30,94h4v2h-4z M37,91h4v5h-4z M44,91h4v5h-4z M51,91h4v2h-4z M51,94h4v2h-4z M58,91h4v5h-4z M65,91h4v5h-4z M72,91h4v2h-4z M72,94h4v2h-4z M79,91h4v5h-4z M86,91h4v5h-4z"/>
 </vector>
