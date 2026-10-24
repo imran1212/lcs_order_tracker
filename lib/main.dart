@@ -2674,7 +2674,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           BoxShadow(
             color: (isTotal ? accent : color).withOpacity(ios ? .12 : (isTotal ? .18 : .08)),
             blurRadius: ios ? 24 : 14,
-            offset: const Offset(0, ios ? 8 : 5),
+            offset: Offset(0, ios ? 8 : 5),
           ),
         ],
       ),
