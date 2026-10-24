@@ -14,7 +14,7 @@ jobs:
       - name: Checkout reviewed release candidate
         uses: actions/checkout@v4
         with:
-          ref: feature/pre-release-security-hardening
+          ref: feature/order-bulk-user-admin-public-tracking
 
       - name: Verify upload signing secrets exist
         env:
