@@ -1585,32 +1585,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: const Color(0xFF087A46),
-                borderRadius: BorderRadius.circular(13),
+                gradient: LinearGradient(
+                  colors: appPaletteIndex.value == 9
+                      ? const [Color(0xFF007AFF), Color(0xFF65B5FF)]
+                      : appPaletteIndex.value == 10
+                          ? const [Color(0xFF1428A0), Color(0xFF5C7CFA)]
+                          : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Colors.white, .25)!],
+                ),
+                borderRadius: BorderRadius.circular(appPaletteIndex.value == 9 ? 15 : (appPaletteIndex.value == 10 ? 16 : 13)),
+                boxShadow: appPaletteIndex.value == 9
+                    ? [BoxShadow(color: const Color(0xFF007AFF).withOpacity(.22), blurRadius: 12, offset: const Offset(0, 4))]
+                    : null,
               ),
-              child: const AQASLogoMark(size: 42),
+              child: Icon(
+                appPaletteIndex.value == 9 ? Icons.blur_on_rounded
+                    : (appPaletteIndex.value == 10 ? Icons.widgets_rounded : Icons.local_shipping_rounded),
+                color: Colors.white,
+                size: 25,
+              ),
             ),
             const SizedBox(width: 12),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'LCS Tracker by AQAS',
-                  style: TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    appPaletteIndex.value == 9 ? 'LCS Tracker'
+                        : (appPaletteIndex.value == 10 ? 'LCS Tracker' : 'LCS Tracker by AQAS'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
                   ),
-                ),
-                Text(
-                  'Order Management by AQAS',
-                  style: TextStyle(fontSize: 10, color: Color(0xFF616161), fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Limited Licensed for AQAQ',
-                  style: TextStyle(fontSize: 8, color: Color(0xFF087A46), fontWeight: FontWeight.w700),
-                ),
-              ],
+                  Text(
+                    appPaletteIndex.value == 9 ? 'Liquid Glass Edition'
+                        : (appPaletteIndex.value == 10 ? 'One UI Edition' : 'Order Management by AQAS'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: Color(0xFF616161), fontWeight: FontWeight.w600),
+                  ),
+                  if (appPaletteIndex.value != 9 && appPaletteIndex.value != 10) ...[
+                    const SizedBox(height: 2),
+                    const Text('Limited Licensed for AQAQ',
+                      style: TextStyle(fontSize: 8, color: Color(0xFF087A46), fontWeight: FontWeight.w700)),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
