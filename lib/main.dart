@@ -1465,24 +1465,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final ageHours = since == null ? null : DateTime.now().difference(since).inHours;
             return Padding(
               padding: const EdgeInsets.only(top: 7),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB42318)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => OrderDetailScreen(
+                      orderId: order.id,
+                      isAdmin: isAdmin,
+                      currentUid: workerUid,
+                    ),
+                  )),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(order.cn, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
-                        Text(order.status, style: const TextStyle(fontSize: 12, color: Color(0xFF7A271A))),
+                        const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB42318)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(order.cn, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                              Text(order.status, style: const TextStyle(fontSize: 12, color: Color(0xFF7A271A))),
+                            ],
+                          ),
+                        ),
+                        if (ageHours != null)
+                          Text(ageHours < 0 ? 'Just now' : '${ageHours}h ago',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF912018))),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right_rounded, size: 20, color: Color(0xFFB42318)),
                       ],
                     ),
                   ),
-                  if (ageHours != null)
-                    Text(ageHours < 0 ? 'Just now' : '${ageHours}h ago',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF912018))),
-                ],
+                ),
               ),
             );
           }),
@@ -1581,18 +1599,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final hours = DateTime.now().difference(since).inHours;
             return Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                children: [
-                  const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF92400E)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${order.cn} • ${order.status}',
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => OrderDetailScreen(
+                      orderId: order.id,
+                      isAdmin: isAdmin,
+                      currentUid: workerUid,
+                    ),
+                  )),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF92400E)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${order.cn} • ${order.status}',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                          ),
+                        ),
+                        Text('${hours}h', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF92400E))),
+                        const SizedBox(width: 5),
+                        const Icon(Icons.chevron_right_rounded, size: 20, color: Color(0xFF92400E)),
+                      ],
                     ),
                   ),
-                  Text('${hours}h', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF92400E))),
-                ],
+                ),
               ),
             );
           }),
