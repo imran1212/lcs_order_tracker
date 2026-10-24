@@ -1012,6 +1012,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _bulkSyncCompleted = 0;
   int _bulkSyncTotal = 0;
   bool _showAllStationDelayedOrders = false;
+  bool _publicTracking = false;
+  bool _selectionMode = false;
+  bool _deletingSelectedOrders = false;
+  final Set<String> _selectedOrderIds = <String>{};
+  final TextEditingController _publicTrackController = TextEditingController();
   int _bottomNavIndex = 0;
   final ScrollController _dashboardScrollController = ScrollController();
   final GlobalKey _ordersSectionKey = GlobalKey();
@@ -1073,7 +1078,212 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _statusNotificationSubscription?.cancel();
     _dashboardScrollController.dispose();
     _searchController.dispose();
+    _publicTrackController.dispose();
     super.dispose();
+  }
+
+
+  // LCS_UNSAVED_TRACKING_SEARCH_V1
+  Widget _publicTrackingCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.travel_explore_rounded, color: Color(0xFF087A46)),
+          SizedBox(width: 8),
+          Expanded(child: Text('Track Any SR / CN', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900))),
+        ]),
+        const SizedBox(height: 5),
+        Text('Saved order hona zaroori nahi. SR/CN enter karke tracking check karein.',
+          style: TextStyle(color: Colors.grey, fontSize: 12)),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _publicTrackController,
+          textCapitalization: TextCapitalization.characters,
+          autocorrect: false,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _trackUnsavedCn(),
+          decoration: InputDecoration(
+            hintText: 'SR / CN number',
+            prefixIcon: const Icon(Icons.search_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(13)),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(width: double.infinity, child: FilledButton.icon(
+          onPressed: _publicTracking ? null : _trackUnsavedCn,
+          icon: _publicTracking
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.local_shipping_rounded),
+          label: Text(_publicTracking ? 'Tracking...' : 'Track Shipment'),
+        )),
+      ]),
+    );
+  }
+
+  Future<void> _trackUnsavedCn() async {
+    final cn = _publicTrackController.text.trim();
+    if (cn.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('SR / CN number enter karein.')));
+      return;
+    }
+    if (_publicTracking) return;
+    setState(() => _publicTracking = true);
+    try {
+      final result = await LcsApiService.syncCn(cn);
+      final packet = result.rawPacket;
+      final eventMaps = LcsApiService._trackingEventMaps(packet);
+      final events = <MapEntry<String, DateTime?>>[];
+      final seen = <String>{};
+      for (final map in eventMaps) {
+        final status = LcsApiService._eventStatusFromMap(map).trim();
+        if (status.isEmpty) continue;
+        final date = LcsApiService._dateFromMap(map);
+        final key = status.toLowerCase() + '|' + (date?.toIso8601String() ?? '');
+        if (seen.add(key)) events.add(MapEntry(status, date));
+      }
+      events.sort((a, b) {
+        if (a.value == null) return b.value == null ? 0 : 1;
+        if (b.value == null) return -1;
+        return a.value!.compareTo(b.value!);
+      });
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Tracking • ' + cn, style: const TextStyle(fontWeight: FontWeight.w900)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: double.infinity, padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: const Color(0xFFE7F5EC), borderRadius: BorderRadius.circular(12)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('Latest status from API', style: TextStyle(fontSize: 11, color: Color(0xFF176B43))),
+                    const SizedBox(height: 4),
+                    Text(result.status, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                    if (result.statusDate != null) Text(_formatDateTime(result.statusDate)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+                const Text('Tracking history', style: TextStyle(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 6),
+                if (events.isEmpty)
+                  const Text('API ne detailed history return nahi ki. Sirf latest status available hai.')
+                else
+                  ...events.map((event) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Padding(padding: EdgeInsets.only(top: 3, right: 8),
+                        child: Icon(Icons.circle, size: 9, color: Color(0xFF087A46))),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(event.key, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        Text(event.value == null ? 'Date/time unavailable from API' : event.value!.toString(),
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                      ])),
+                    ]),
+                  )),
+                const SizedBox(height: 8),
+                Text('Lookup not saved as an order.', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              ],
+            )),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+        ),
+      );
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Tracking nahi ho saki: ' + error.toString())));
+    } finally {
+      if (mounted) setState(() => _publicTracking = false);
+    }
+  }
+
+  Widget _orderSelectionToolbar(List<OrderData> orders) {
+    final allowed = orders.where((order) => isAdmin || order.workerUid == workerUid).toList();
+    if (!_selectionMode) {
+      return Align(alignment: Alignment.centerRight, child: TextButton.icon(
+        onPressed: allowed.isEmpty ? null : () => setState(() { _selectionMode = true; _selectedOrderIds.clear(); }),
+        icon: const Icon(Icons.checklist_rounded), label: const Text('Select orders'),
+      ));
+    }
+    final allSelected = allowed.isNotEmpty && allowed.every((order) => _selectedOrderIds.contains(order.id));
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
+      child: Column(children: [
+        Row(children: [
+          Checkbox(value: allSelected, onChanged: (value) => setState(() {
+            if (value == true) { _selectedOrderIds.addAll(allowed.map((order) => order.id)); }
+            else { _selectedOrderIds.removeAll(allowed.map((order) => order.id)); }
+          })),
+          const Expanded(child: Text('Select all visible orders')),
+          Text(_selectedOrderIds.length.toString() + ' selected'),
+        ]),
+        Row(children: [
+          Expanded(child: OutlinedButton(onPressed: () => setState(() { _selectionMode = false; _selectedOrderIds.clear(); }), child: const Text('Cancel'))),
+          const SizedBox(width: 8),
+          Expanded(child: FilledButton.icon(
+            onPressed: _selectedOrderIds.isEmpty || _deletingSelectedOrders ? null : _deleteSelectedOrders,
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: Text(_deletingSelectedOrders ? 'Deleting...' : 'Delete selected'),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB42318)),
+          )),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _selectableOrderCard(OrderData order) {
+    if (!_selectionMode || (!isAdmin && order.workerUid != workerUid)) return _orderCard(order);
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Checkbox(value: _selectedOrderIds.contains(order.id), onChanged: (value) => setState(() {
+        if (value == true) _selectedOrderIds.add(order.id); else _selectedOrderIds.remove(order.id);
+      })),
+      Expanded(child: _orderCard(order)),
+    ]);
+  }
+
+  Future<void> _deleteSelectedOrders() async {
+    final ids = _selectedOrderIds.toList();
+    if (ids.isEmpty || _deletingSelectedOrders) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete selected orders?'),
+        content: Text(ids.length.toString() + ' order(s) will be hidden but retained for recovery.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB42318)), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deletingSelectedOrders = true);
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in ids) {
+        batch.update(FirebaseFirestore.instance.collection('orders').doc(id), {
+          'isDeleted': true,
+          'deletedAt': FieldValue.serverTimestamp(),
+          'deletedBy': workerUid,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ids.length.toString() + ' order(s) deleted.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed; Firestore permissions/rules check required.')));
+    } finally {
+      if (mounted) setState(() {
+        _deletingSelectedOrders = false;
+        _selectionMode = false;
+        _selectedOrderIds.clear();
+      });
+    }
   }
 
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
@@ -1493,7 +1703,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             );
           }
 
-          final docs = snapshot.data?.docs ?? [];
+          final docs = (snapshot.data?.docs ?? []).where((doc) => doc.data()['isDeleted'] != true).toList();
 
           final orders = docs
               .map((doc) => OrderData.fromFirestore(doc))
@@ -1544,6 +1754,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
               children: [
                 _welcomeCard(),
+                const SizedBox(height: 12),
+                _publicTrackingCard(),
                 const SizedBox(height: 16),
 
                 _statsRow(orders),
@@ -1578,6 +1790,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _failedDeliveryRescue(orders),
 
                 const SizedBox(height: 22),
+
+                _orderSelectionToolbar(orders),
+                const SizedBox(height: 6),
 
                 Row(
                   key: _ordersSectionKey,
@@ -1772,9 +1987,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 if (orders.isEmpty)
                   _emptyState(hasActiveFilters: _hasActiveFilters())
                 else
-                  ...orders.map(
-                    (order) => _orderCard(order),
-                  ),
+                  ...orders.map((order) => _selectableOrderCard(order)),
               ],
             ),
           );
