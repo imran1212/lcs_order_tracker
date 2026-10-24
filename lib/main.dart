@@ -1050,7 +1050,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _trackAnyController = TextEditingController();
   bool _trackingAnyCn = false;
+  final Set<String> _selectedOrderIds = <String>{};
+  bool _deletingSelectedOrders = false;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
+
+  Future<void> _deleteSelectedOrders(List<OrderData> visibleOrders) async {
+    if (!isAdmin || _selectedOrderIds.isEmpty || _deletingSelectedOrders) return;
+    final selected = Set<String>.from(_selectedOrderIds);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete ${selected.length} orders?'),
+        content: const Text('Selected orders will be permanently deleted. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete selected'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deletingSelectedOrders = true);
+    try {
+      final db = FirebaseFirestore.instance;
+      final ids = selected.toList();
+      for (var start = 0; start < ids.length; start += 450) {
+        final batch = db.batch();
+        final end = (start + 450 < ids.length) ? start + 450 : ids.length;
+        for (final id in ids.sublist(start, end)) {
+          batch.delete(db.collection('orders').doc(id));
+        }
+        await batch.commit();
+      }
+      if (!mounted) return;
+      setState(() {
+        _selectedOrderIds.removeAll(selected);
+        _deletingSelectedOrders = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${selected.length} orders deleted successfully.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _deletingSelectedOrders = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bulk delete failed: $e')),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -1640,7 +1690,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const AdminScreen(),
+                    builder: (_) => const AdminCommandCenterScreen(),
                   ),
                 );
               },
@@ -1962,6 +2012,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 // saved-order list belongs to the Orders bottom-navigation tab.
                 // If the user searches from Dashboard, show matching saved orders here.
                 if (_bottomNavIndex == 1 || searchText.trim().isNotEmpty) ...[
+                  if (isAdmin && _bottomNavIndex == 1) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                      child: Row(children: [
+                        Checkbox(
+                          value: orders.isNotEmpty && orders.every((o) => _selectedOrderIds.contains(o.id)),
+                          tristate: _selectedOrderIds.isNotEmpty && !orders.every((o) => _selectedOrderIds.contains(o.id)),
+                          onChanged: (value) => setState(() {
+                            if (value == true) {
+                              _selectedOrderIds.addAll(orders.map((o) => o.id));
+                            } else {
+                              _selectedOrderIds.removeAll(orders.map((o) => o.id));
+                            }
+                          }),
+                        ),
+                        Expanded(child: Text(
+                          _selectedOrderIds.isEmpty ? 'Select orders' : '${_selectedOrderIds.length} selected',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        )),
+                        if (_selectedOrderIds.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: _deletingSelectedOrders ? null : () => _deleteSelectedOrders(orders),
+                            icon: _deletingSelectedOrders
+                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                            label: const Text('Delete', style: TextStyle(color: Colors.red)),
+                          ),
+                      ]),
+                    ),
+                  ],
                   if (orders.isEmpty)
                     _emptyState(hasActiveFilters: _hasActiveFilters())
                   else
@@ -2734,10 +2816,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final color = statusColor(order.status);
     final ageFrom = order.statusDate ?? order.bookingDate;
     final canEdit = isAdmin || order.workerUid == workerUid;
+    final selectable = isAdmin && _bottomNavIndex == 1;
+    final selected = _selectedOrderIds.contains(order.id);
 
     return InkWell(
       borderRadius: BorderRadius.circular(19),
       onTap: () {
+        if (selectable && _selectedOrderIds.isNotEmpty) {
+          setState(() {
+            if (selected) {
+              _selectedOrderIds.remove(order.id);
+            } else {
+              _selectedOrderIds.add(order.id);
+            }
+          });
+          return;
+        }
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -2974,6 +3068,116 @@ Widget _statusBadge(String status, Color color) {
         fontSize: 10,
         fontWeight: FontWeight.w800,
       ),
+    ),
+  );
+}
+
+class AdminCommandCenterScreen extends StatelessWidget {
+  const AdminCommandCenterScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final db = FirebaseFirestore.instance;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Admin Command Center', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('orders').snapshots(),
+        builder: (context, snapshot) {
+          final docs = snapshot.data?.docs ?? [];
+          final statuses = docs.map((d) => (d.data()['status'] ?? '').toString().toLowerCase()).toList();
+          final delivered = statuses.where((s) => s.contains('delivered') && !s.contains('undelivered')).length;
+          final returned = statuses.where((s) => s.contains('return')).length;
+          final pending = statuses.where((s) => s.contains('pending') || s.isEmpty).length;
+          final syncPending = docs.where((d) {
+            final data = d.data();
+            final status = (data['status'] ?? '').toString().toLowerCase();
+            final synced = data['lastSyncedAt'] != null || data['apiSynced'] == true;
+            return !status.contains('delivered') && !synced;
+          }).length;
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: appPaletteIndex.value == 9
+                    ? const [Color(0xFF007AFF), Color(0xFF65B5FF)]
+                    : appPaletteIndex.value == 10
+                      ? const [Color(0xFF1428A0), Color(0xFF5C7CFA)]
+                      : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Colors.white, .25)!]),
+                  borderRadius: BorderRadius.circular(26),
+                ),
+                child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Operations overview', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                  SizedBox(height: 6),
+                  Text('Admin Command Center', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+                  SizedBox(height: 4),
+                  Text('Live summary from saved orders', style: TextStyle(color: Colors.white)),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              GridView.count(
+                crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.45,
+                children: [
+                  _metric('Total Orders', docs.length, Icons.inventory_2_rounded, const Color(0xFF1769E0)),
+                  _metric('Delivered', delivered, Icons.check_circle_rounded, const Color(0xFF12805C)),
+                  _metric('Returns', returned, Icons.assignment_return_rounded, const Color(0xFFD9485F)),
+                  _metric('Pending', pending, Icons.hourglass_top_rounded, const Color(0xFFB7791F)),
+                  _metric('Pending API Sync', syncPending, Icons.sync_problem_rounded, const Color(0xFF6B5BD2)),
+                ],
+              ),
+              const SizedBox(height: 18),
+              const Text('Management', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 10),
+              _action(context, Icons.people_alt_rounded, 'Worker & User Management', 'Add workers and enable/disable accounts', () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen()));
+              }),
+              _action(context, Icons.delete_sweep_rounded, 'Bulk Order Delete', 'Open Orders tab to select individual orders or select all filtered results', () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Orders tab kholen, filters lagayen, phir checkboxes se select aur delete karein.')));
+              }),
+              _action(context, Icons.bar_chart_rounded, 'Reports & Performance', 'City delivery ranking and worker performance', () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reports bottom menu mein available hain.')));
+              }),
+              _action(context, Icons.sync_rounded, 'Sync & Exceptions', 'Review pending sync and delayed shipment alerts', () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dashboard par Sync All aur delayed-order alerts available hain.')));
+              }),
+              if (snapshot.hasError) Padding(padding: const EdgeInsets.only(top: 12), child: Text('Order summary load error: ${snapshot.error}')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _metric(String label, int value, IconData icon, Color color) => Container(
+    padding: const EdgeInsets.all(13),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(.14)),
+      boxShadow: [BoxShadow(color: color.withOpacity(.06), blurRadius: 16, offset: const Offset(0, 5))]),
+    child: Row(children: [
+      Container(width: 40, height: 40, decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(13)),
+        child: Icon(icon, color: color)),
+      const SizedBox(width: 9),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text('$value', style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF667085), fontWeight: FontWeight.w700)),
+      ])),
+    ]),
+  );
+
+  Widget _action(BuildContext context, IconData icon, String title, String subtitle, VoidCallback onTap) => Card(
+    elevation: 0, margin: const EdgeInsets.only(bottom: 10),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: Color(0xFFE7EAF0))),
+    child: ListTile(
+      leading: Icon(icon, color: aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], size: 27),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: onTap,
     ),
   );
 }
