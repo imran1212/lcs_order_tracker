@@ -3351,6 +3351,41 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  Future<void> _saveApiTrackingEvents(
+    DocumentReference<Map<String, dynamic>> orderRef,
+    LcsSyncResult result,
+    String cn,
+  ) async {
+    final maps = <Map<String, dynamic>>[
+      ...LcsApiService._maps(LcsApiService._mapValue(result.rawPacket, [
+        'Tracking Detail', 'tracking_detail', 'trackingDetail',
+        'tracking_history', 'trackingHistory', 'tracking_details',
+      ])),
+      ...LcsApiService._trackingEventMaps(result.rawPacket),
+    ];
+    final batch = FirebaseFirestore.instance.batch();
+    var count = 0;
+    for (final map in maps) {
+      final status = LcsApiService._eventStatusFromMap(map).trim();
+      if (status.isEmpty) continue;
+      final date = LcsApiService._dateFromMap(map);
+      final dateKey = (date?.toUtc().toIso8601String() ?? 'undated')
+          .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+      final statusKey = status.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+      final id = 'api_${statusKey}_${dateKey}';
+      batch.set(orderRef.collection('lcsStatusHistory').doc(id), {
+        'cn': cn,
+        'previousStatus': '',
+        'status': status,
+        'source': 'lcs_api_history',
+        'activityDate': date == null ? null : Timestamp.fromDate(date),
+        'recordedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      count++;
+    }
+    if (count > 0) await batch.commit();
+  }
+
   Future<void> _syncOrder(BuildContext context, OrderData order) async {
     if (syncing) return;
     setState(() => syncing = true);
@@ -3366,6 +3401,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'lcsRawStatus': result.status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      await _saveApiTrackingEvents(orderRef, result, order.cn);
       if (previousStatus != result.status.trim()) {
         // LCS_HISTORY_IDEMPOTENCY_V1: same status/date/source reuses the same document.
         final historyStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
@@ -4304,16 +4340,41 @@ Future<void> _loadWorkerName() async {
   }
 
   Future<void> _saveBulkReceiptOrders() async {
-    final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
-    if (valid.isEmpty) {
+    final allWithCn = _bulkReceiptDrafts
+        .where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty)
+        .toList();
+    if (allWithCn.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Kisi receipt se CN number detect nahi hua. Fields manually correct karein.')),
       );
       return;
     }
     try {
-      final batch = FirebaseFirestore.instance.batch();
       final ordersCollection = FirebaseFirestore.instance.collection('orders');
+      final existingSnapshot = await ordersCollection.get();
+      final existingCns = existingSnapshot.docs
+          .map((doc) => (doc.data()['cn'] ?? '').toString().trim().toUpperCase())
+          .where((cn) => cn.isNotEmpty)
+          .toSet();
+      final seenInThisUpload = <String>{};
+      final valid = <Map<String, dynamic>>[];
+      final duplicateCns = <String>[];
+      for (final draft in allWithCn) {
+        final cn = (draft['cn'] ?? '').toString().trim();
+        final key = cn.toUpperCase();
+        if (existingCns.contains(key) || !seenInThisUpload.add(key)) {
+          duplicateCns.add(cn);
+          continue;
+        }
+        valid.add(draft);
+      }
+      if (valid.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Koi naya order save nahi hua. ${duplicateCns.length} duplicate CN skip kiye: ${duplicateCns.join(', ')}')),
+        );
+        return;
+      }
+      final batch = FirebaseFirestore.instance.batch();
       for (final draft in valid) {
         final ref = ordersCollection.doc();
         final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
@@ -4349,10 +4410,12 @@ Future<void> _loadWorkerName() async {
       }
       await batch.commit();
       if (!mounted) return;
-      final skipped = _bulkReceiptDrafts.length - valid.length;
+      final missingCn = _bulkReceiptDrafts.length - allWithCn.length;
+      final duplicateSummary = duplicateCns.isEmpty ? '' : ' ${duplicateCns.length} duplicate(s) skipped: ${duplicateCns.join(', ')}.';
+      final missingSummary = missingCn == 0 ? '' : ' $missingCn receipt(s) skipped because CN was not detected.';
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
+        SnackBar(content: Text('${valid.length} order(s) saved.$duplicateSummary$missingSummary'), duration: const Duration(seconds: 8)),
       );
     } catch (e) {
       if (!mounted) return;
