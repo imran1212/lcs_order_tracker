@@ -3879,6 +3879,60 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   bool _ocrLoading = false;
   String _ocrMessage = '';
 
+// DIAG_SAVE_V1
+  bool _saving = false;
+
+  /// Runs one Firestore operation. If it fails, the label, plugin, code and
+  /// message are all kept in the thrown error (nothing is hidden).
+  Future<T> _diagStep<T>(String label, Future<T> Function() action) async {
+    try {
+      return await action();
+    } on FirebaseException catch (e) {
+      throw Exception('[$label] ${e.plugin}/${e.code}: ${e.message}');
+    } catch (e) {
+      throw Exception('[$label] ${e.runtimeType}: $e');
+    }
+  }
+
+  /// Read-only snapshot of exactly what the security rules will see.
+  Future<String> _diagPreflight() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('[P0 auth] Pehle app mein login karein.');
+    final snap = await _diagStep(
+      'P1 read users/${user.uid}',
+      () => FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
+    );
+    final d = snap.data() ?? <String, dynamic>{};
+    final active = d['active'];
+    final role = d['role'];
+    return 'project=${Firebase.app().options.projectId}\n'
+        'authUid=${user.uid}\n'
+        'widget.workerUid=${widget.workerUid}\n'
+        'uidMatch=${user.uid == widget.workerUid}\n'
+        'profileExists=${snap.exists}\n'
+        'active=$active (${active.runtimeType}) rulesOk=${active == true}\n'
+        'role="$role" (${role.runtimeType}) roleOk=${role == 'worker' || role == 'admin'}';
+  }
+
+  /// Selectable dialog so the full error can be read / screenshotted.
+  Future<void> _diagShow(String title, String body) async {
+    debugPrint('DIAG $title: $body');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: SelectableText(body)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _pickReceiptImages() async {
     try {
       final images = await _picker.pickMultiImage(imageQuality: 75, maxWidth: 1600, maxHeight: 2200);
@@ -4243,6 +4297,78 @@ Future<void> _loadWorkerName() async {
     });
   }
 
+Future<void> _saveBulkReceiptOrders() async { ... })
+//   EDIT 1: INSERT  after line 3880  (String _ocrMessage = '';)
+//
+// No new imports needed: Firebase / FirebaseException (firebase_core),
+// FirebaseAuth, FirebaseFirestore, material widgets and debugPrint are
+// already imported at the top of main.dart.
+// ======================================================================
+
+
+// ----------------------------------------------------------------------
+// EDIT 1 — INSERT right after:   String _ocrMessage = '';
+// ----------------------------------------------------------------------
+
+  // DIAG_SAVE_V1
+  bool _saving = false;
+
+  /// Runs one Firestore operation. If it fails, the label, plugin, code and
+  /// message are all kept in the thrown error (nothing is hidden).
+  Future<T> _diagStep<T>(String label, Future<T> Function() action) async {
+    try {
+      return await action();
+    } on FirebaseException catch (e) {
+      throw Exception('[$label] ${e.plugin}/${e.code}: ${e.message}');
+    } catch (e) {
+      throw Exception('[$label] ${e.runtimeType}: $e');
+    }
+  }
+
+  /// Read-only snapshot of exactly what the security rules will see.
+  Future<String> _diagPreflight() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('[P0 auth] Pehle app mein login karein.');
+    final snap = await _diagStep(
+      'P1 read users/${user.uid}',
+      () => FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
+    );
+    final d = snap.data() ?? <String, dynamic>{};
+    final active = d['active'];
+    final role = d['role'];
+    return 'project=${Firebase.app().options.projectId}\n'
+        'authUid=${user.uid}\n'
+        'widget.workerUid=${widget.workerUid}\n'
+        'uidMatch=${user.uid == widget.workerUid}\n'
+        'profileExists=${snap.exists}\n'
+        'active=$active (${active.runtimeType}) rulesOk=${active == true}\n'
+        'role="$role" (${role.runtimeType}) roleOk=${role == 'worker' || role == 'admin'}';
+  }
+
+  /// Selectable dialog so the full error can be read / screenshotted.
+  Future<void> _diagShow(String title, String body) async {
+    debugPrint('DIAG $title: $body');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: SelectableText(body)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+// ----------------------------------------------------------------------
+// EDIT 2 — REPLACE the whole existing  Future<void> _saveBulkReceiptOrders() async { ... }
+// ----------------------------------------------------------------------
+
   Future<void> _saveBulkReceiptOrders() async {
     final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
     if (valid.isEmpty) {
@@ -4251,6 +4377,10 @@ Future<void> _loadWorkerName() async {
       );
       return;
     }
+    // Captured BEFORE any await so they stay valid after the sheet is popped.
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    String preflight = '(preflight run nahi hua)';
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser == null) throw Exception('Pehle app mein login karein.');
@@ -4262,6 +4392,28 @@ Future<void> _loadWorkerName() async {
         }
         if (!normalizedCns.add(cn)) throw Exception('Bulk receipts mein duplicate CN hai: $cn');
       }
+
+      preflight = await _diagPreflight();
+
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      final alreadyReserved = <String>[];
+      for (final cn in normalizedCns) {
+        final regSnap = await _diagStep(
+          'R1 read cnRegistry/$cn',
+          () => FirebaseFirestore.instance.collection('cnRegistry').doc(cn).get(),
+        );
+        if (regSnap.exists) {
+          alreadyReserved.add('$cn (orderId: ${regSnap.data()?['orderId']})');
+        }
+      }
+      if (alreadyReserved.isNotEmpty) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'Ye CN registry mein pehle se maujood hain:\n${alreadyReserved.join('\n')}\n\nKoi order save nahi kiya.',
+        );
+        return;
+      }
+
       final batch = FirebaseFirestore.instance.batch();
       final ordersCollection = FirebaseFirestore.instance.collection('orders');
       final registryCollection = FirebaseFirestore.instance.collection('cnRegistry');
@@ -4305,26 +4457,23 @@ Future<void> _loadWorkerName() async {
           'recordedAt': FieldValue.serverTimestamp(),
         });
       }
-      await batch.commit();
+      await _diagStep(
+        'B1 batch.commit BULK (${valid.length} orders, ${valid.length * 3} writes)',
+        () => batch.commit(),
+      );
       if (!mounted) return;
       final skipped = _bulkReceiptDrafts.length - valid.length;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      navigator.pop();
+      messenger.showSnackBar(
         SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bulk orders save nahi huay: $e')),
-      );
+      await _diagShow('Bulk orders save nahi huay', '$e\n\n--- preflight ---\n$preflight');
     }
   }
 
-  Future<void> save() async {
-    if (_bulkReceiptDrafts.length > 1) {
-      await _saveBulkReceiptOrders();
-      return;
-    }
+  Future<void> _saveSingleOrder() async {
     if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Customer name and CN number are required.')),
@@ -4335,6 +4484,11 @@ Future<void> _loadWorkerName() async {
     final amount = double.tryParse(amountController.text.trim()) ?? 0;
     final finalBookingDate = bookingDate ?? DateTime.now();
 
+    // Captured BEFORE any await so they stay valid after the sheet is popped.
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    String preflight = '(preflight run nahi hua)';
+    bool committed = false;
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser == null) throw Exception('Pehle app mein login karein.');
@@ -4343,8 +4497,21 @@ Future<void> _loadWorkerName() async {
         throw Exception('CN mein sirf A-Z, 0-9, dot, underscore ya hyphen allowed hain.');
       }
 
+      preflight = await _diagPreflight();
+
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
       final registryRef = FirebaseFirestore.instance.collection('cnRegistry').doc(cn);
+
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      final regSnap = await _diagStep('R1 read cnRegistry/$cn', () => registryRef.get());
+      if (regSnap.exists) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'CN $cn registry mein pehle se maujood hai (orderId: ${regSnap.data()?['orderId']}). Naya order save nahi kiya.',
+        );
+        return;
+      }
+
       final batch = FirebaseFirestore.instance.batch();
 
       batch.set(orderRef, {
@@ -4384,67 +4551,99 @@ Future<void> _loadWorkerName() async {
         'recordedAt': FieldValue.serverTimestamp(),
       });
 
-      // Rules require order + CN reservation + initial history to be atomic.
-      await batch.commit();
+      // B1: the atomic batch (orders + cnRegistry + lcsStatusHistory).
+      await _diagStep(
+        'B1 batch.commit SINGLE (orders/${orderRef.id} + cnRegistry/$cn + history/order_created_pending)',
+        () => batch.commit(),
+      );
+      committed = true;
 
-      // Spark development mode: receipt images are used for OCR/review only.
-      // Permanent Storage upload is intentionally disabled for now.
-      await orderRef.update({
-        'receiptUrls': <String>[],
-        'receiptCount': _receiptImages.length,
-        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      // U1: receipt metadata update AFTER the batch (order already exists here).
+      await _diagStep(
+        'U1 orderRef.update receipt metadata',
+        () => orderRef.update({
+          'receiptUrls': <String>[],
+          'receiptCount': _receiptImages.length,
+          'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
+      );
 
       // Automatically fetch LCS status immediately after saving a new order.
       // Keep the order saved even if the courier API is temporarily unavailable.
       String? syncWarning;
       try {
-        final result = await LcsApiService.syncCn(cnController.text.trim());
-        await orderRef.update({
-          'status': result.status,
-          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-          'lastApiSyncAt': FieldValue.serverTimestamp(),
-          'lcsRawStatus': result.status,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        final result = await _diagStep(
+          'S1 LcsApiService.syncCn',
+          () => LcsApiService.syncCn(cnController.text.trim()),
+        );
+        await _diagStep(
+          'S2 orderRef.update LCS status',
+          () => orderRef.update({
+            'status': result.status,
+            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+            'lastApiSyncAt': FieldValue.serverTimestamp(),
+            'lcsRawStatus': result.status,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }),
+        );
         if (result.status.trim() != 'Pending API Sync') {
           final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
           final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-          await orderRef.collection('lcsStatusHistory')
-              .doc('new_auto_${autoStatusKey}_$autoTimeKey')
-              .set({
-            'cn': cnController.text.trim(),
-            'previousStatus': 'Pending API Sync',
-            'status': result.status.trim(),
-            'source': 'new_order_auto_sync',
-            'activityDate': result.statusDate == null
-                ? Timestamp.now()
-                : Timestamp.fromDate(result.statusDate!),
-            'recordedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+          await _diagStep(
+            'S3 history set(merge) new_auto_${autoStatusKey}_$autoTimeKey',
+            () => orderRef.collection('lcsStatusHistory')
+                .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+                .set({
+              // NOTE: was cnController.text.trim(); now the same uppercase `cn`
+              // stored on the order, because the rule compares it with order.cn.
+              'cn': cn,
+              'previousStatus': 'Pending API Sync',
+              'status': result.status.trim(),
+              'source': 'new_order_auto_sync',
+              'activityDate': result.statusDate == null
+                  ? Timestamp.now()
+                  : Timestamp.fromDate(result.statusDate!),
+              'recordedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true)),
+          );
         }
       } catch (e) {
-        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua. Order detail se dobara sync karein.';
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua.\n$e';
       }
 
       if (!mounted) return;
-      Navigator.pop(context);
-      if (syncWarning != null && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 5)),
+      navigator.pop();
+      if (syncWarning != null) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 8)),
         );
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order save nahi hua: $e')),
+      await _diagShow(
+        committed ? 'Order SAVE ho chuka (batch OK), baad ka step fail' : 'Order save nahi hua',
+        '$e\n\n--- preflight ---\n$preflight',
       );
     }
   }
 
-  @override
+  Future<void> save() async {
+    if (_saving) return; // repeated taps ignored
+    setState(() => _saving = true);
+    try {
+      if (_bulkReceiptDrafts.length > 1) {
+        await _saveBulkReceiptOrders();
+        return;
+      }
+      await _saveSingleOrder();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+    @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
 
