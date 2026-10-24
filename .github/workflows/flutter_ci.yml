@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/order-bulk-user-admin-public-tracking
     paths:
       - "lib/**"
       - "test/**"

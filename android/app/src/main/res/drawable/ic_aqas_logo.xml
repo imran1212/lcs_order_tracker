@@ -4,12 +4,35 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#006B3C" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#008C4A" android:pathData="M8,37L54,7 100,37v63H8z"/>
-    <path android:fillColor="#D7192D" android:pathData="M4,58 C4,43 27,38 54,38 C81,38 104,43 104,58 C104,74 81,80 54,80 C27,80 4,74 4,58z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M5,58 C5,44 28,39 54,39 C80,39 103,44 103,58 C103,73 80,79 54,79 C28,79 5,73 5,58z"/>
-    <path android:fillColor="#D7192D" android:pathData="M8,58 C8,46 29,42 54,42 C79,42 100,46 100,58 C100,70 79,76 54,76 C29,76 8,70 8,58z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M26,89h39v-4h-39z M31,84h7v-9h-7z M43,84h7v-9h-7z M55,84h7v-9h-7z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M65,85h15v-7h-15z M80,85h7v-5h-7z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M27,59l5,-9h5l5,9h-5l-2,-4 -2,4z M43,59l5,-9h5l5,9h-5l-2,-4 -2,4z M59,59l5,-9h5l5,9h-5l-2,-4 -2,4z"/>
+    <!-- LCS Tracker by AQAS: emerald tile, route map, pin, parcel and courier truck -->
+    <path android:fillColor="#034A2B" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#087A46" android:pathData="M8,2h92c4,0 6,3 6,7v90c0,4 -3,7 -7,7h-91c-4,0 -6,-3 -6,-7v-90c0,-4 2,-7 6,-7z"/>
+    <path android:fillColor="#0B9654" android:pathData="M13,7h82v31h-82z"/>
+    <!-- stylized Pakistan silhouette and route -->
+    <path android:fillColor="#075D37" android:strokeColor="#3EE58B" android:strokeWidth="1.5" android:strokeLineJoin="round" android:pathData="M74,8l8,2 4,5 -2,5 5,4 -4,6 -6,2 -2,7 -5,3 -4,-5 -5,-2 -2,-7 4,-5 1,-7 5,-2z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M56,30 C62,27 64,23 69,22 S78,19 81,14"/>
+    <path android:fillColor="#FFE129" android:pathData="M56,27a3,3 0,1 0,0.1 0z M68,19a3,3 0,1 0,0.1 0z M81,11a3,3 0,1 0,0.1 0z"/>
+    <!-- prominent red location pin -->
+    <path android:fillColor="#E51C2A" android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:pathData="M27,5 C19,5 14,11 14,18 C14,28 27,39 27,39 C27,39 40,28 40,18 C40,11 35,5 27,5z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M27,11a7,7 0,1 0,0.1 0z"/>
+    <path android:fillColor="#E51C2A" android:pathData="M27,14a4,4 0,1 0,0.1 0z"/>
+    <!-- parcel -->
+    <path android:fillColor="#FFD66B" android:pathData="M78,27l11,-5 11,5 -11,6z"/>
+    <path android:fillColor="#D9982F" android:pathData="M78,27l11,6v11l-11,-6z"/>
+    <path android:fillColor="#F4B642" android:pathData="M89,33l11,-6v11l-11,6z"/>
+    <path android:fillColor="#FFF0B8" android:pathData="M87,24l3,-1 3,2 -4,2z"/>
+    <!-- white courier truck -->
+    <path android:fillColor="#FFFFFF" android:pathData="M7,47h50c3,0 5,2 5,5v22h-55z"/>
+    <path android:fillColor="#DDF2E8" android:pathData="M12,52h39v16h-39z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M62,55h14l12,12v7h-26z"/>
+    <path android:fillColor="#1A3540" android:pathData="M66,59h8l8,8h-16z"/>
+    <path android:fillColor="#FACC15" android:pathData="M7,69h55v5h-55z M62,69h26v5h-26z"/>
+    <path android:fillColor="#102B25" android:pathData="M22,74a7,7 0,1 0,0.1 0z M72,74a7,7 0,1 0,0.1 0z"/>
+    <path android:fillColor="#D9F4E8" android:pathData="M22,74a3,3 0,1 0,0.1 0z M72,74a3,3 0,1 0,0.1 0z"/>
+    <!-- bold LCS brand plaque -->
+    <path android:fillColor="#FFE11B" android:pathData="M5,82h98c2,0 3,2 3,4v8c0,3 -2,4 -4,4h-94c-2,0 -3,-2 -3,-4v-8c0,-2 1,-4 3,-4z"/>
+    <path android:fillColor="#071C13" android:pathData="M16,85h5v9h7v3h-12z M32,85h15v3h-10v2h8v3h-8v2h10v3h-15z M51,85h14v3h-10v2h8v3h-8v2h10v3h-14z M69,85h5v9h7v3h-12z M85,85h5v12h-5z"/>
+    <!-- AQAS / TRACKER red accent -->
+    <path android:fillColor="#E21B2D" android:pathData="M8,99h92v6h-92z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M16,100h2v4h-2z M20,100h6v1.5h-6z M20,102h5v1.5h-5z M29,100h2v4h-2z M33,100h6v1.5h-6z M33,102h5v1.5h-5z M42,100h2v4h-2z M46,100h6v1.5h-6z M46,102h5v1.5h-5z M55,100h2v4h-2z M59,100h6v1.5h-6z M59,102h5v1.5h-5z M68,100h2v4h-2z M72,100h6v1.5h-6z M72,102h5v1.5h-5z M81,100h2v4h-2z M85,100h6v1.5h-6z"/>
 </vector>

@@ -2,6 +2,13 @@ name: Build signed Google Play AAB
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/order-bulk-user-admin-public-tracking
+    paths:
+      - "pubspec.yaml"
+      - "android/**"
+      - ".github/workflows/release_aab.yml"
 
 permissions:
   contents: read
@@ -14,7 +21,7 @@ jobs:
       - name: Checkout reviewed release candidate
         uses: actions/checkout@v4
         with:
-          ref: feature/pre-release-security-hardening
+          ref: ${{ github.ref_name }}
 
       - name: Verify upload signing secrets exist
         env:
