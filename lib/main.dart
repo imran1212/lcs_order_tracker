@@ -4649,11 +4649,17 @@ Future<void> _loadWorkerName() async {
               width: double.infinity,
               height: 54,
               child: ElevatedButton.icon(
-                onPressed: save,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text(
-                  'Add Order',
-                  style: TextStyle(
+                onPressed: _saving ? null : save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_rounded),
+                label: Text(
+                  _saving ? 'Saving...' : 'Add Order',
+                  style: const TextStyle(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
