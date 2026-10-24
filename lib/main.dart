@@ -2847,13 +2847,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: selected ? const Color(0xFFE8F1FF) : Colors.white,
           borderRadius: BorderRadius.circular(19),
+          border: selected ? Border.all(color: const Color(0xFF1769E0), width: 1.5) : null,
         ),
         child: Column(
           children: [
             Row(
               children: [
+                if (selectable)
+                  Checkbox(
+                    value: selected,
+                    onChanged: (value) => setState(() {
+                      if (value == true) {
+                        _selectedOrderIds.add(order.id);
+                      } else {
+                        _selectedOrderIds.remove(order.id);
+                      }
+                    }),
+                  ),
                 Container(
                   width: 44,
                   height: 44,
