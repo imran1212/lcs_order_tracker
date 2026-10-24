@@ -79,19 +79,27 @@ service cloud.firestore {
       match /lcsStatusHistory/{eventId} {
         allow get, list: if canReadOrderData(parentOrderData());
 
-        // Event records may be created by an active user who can access the parent order.
-        // Allow only a recordedAt refresh for an identical deterministic event ID,
-        // which supports safe idempotent LCS sync without changing event content.
-        allow create: if activeUser() &&
-          (isAdmin() || ownsOrderData(parentOrderData()));
-        allow update: if activeUser() &&
-          (isAdmin() || ownsOrderData(parentOrderData())) &&
-          // Keep the event tied to its parent order. Legacy history documents
-          // may not have a cn field; permit adding it only when it matches
-          // the parent order's immutable CN.
-          request.resource.data.get('cn', '') == parentOrderData().get('cn', '') &&
-          (resource.data.get('cn', '') == parentOrderData().get('cn', '') ||
-            !resource.data.keys().hasAny(['cn'])) &&
+        // LCS API sync uses set(..., merge: true): the same deterministic event
+        // can be either a new document or an update to an existing history item.
+        // Permit both only for an active admin or the worker assigned to the parent
+        // order, and only when the event CN matches that immutable parent CN.
+        function canWriteParentHistory() {
+          return activeUser() &&
+            (isAdmin() || ownsOrderData(parentOrderData()));
+        }
+
+        function validHistoryPayload() {
+          return request.resource.data.get('cn', '') ==
+              parentOrderData().get('cn', '') &&
+            request.resource.data.get('status', '') is string &&
+            request.resource.data.get('status', '').size() <= 300 &&
+            request.resource.data.get('source', '') is string &&
+            request.resource.data.get('source', '').size() <= 80;
+        }
+
+        allow create: if canWriteParentHistory() && validHistoryPayload();
+        allow update: if canWriteParentHistory() &&
+          validHistoryPayload() &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'cn', 'status', 'previousStatus', 'source', 'activityDate', 'recordedAt'
           ]);
