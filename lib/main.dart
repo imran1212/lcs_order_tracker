@@ -3553,7 +3553,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           .collection('orders')
           .doc(orderId)
           .collection('lcsStatusHistory')
-          .orderBy('recordedAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -3569,7 +3568,23 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ]);
         }
-        final docs = snapshot.data!.docs;
+        final docs = snapshot.data!.docs.toList()
+          ..sort((a, b) {
+            DateTime eventTime(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+              final data = doc.data();
+              final activity = data['activityDate'];
+              final recorded = data['recordedAt'];
+              if (activity is Timestamp) return activity.toDate();
+              if (activity is DateTime) return activity;
+              if (recorded is Timestamp) return recorded.toDate();
+              if (recorded is DateTime) return recorded;
+              return DateTime.fromMillisecondsSinceEpoch(0);
+            }
+            // Put the most recent real tracking event first; use recordedAt only
+            // when an event has no activityDate. This keeps API and sync entries
+            // in one chronological timeline rather than grouping by write time.
+            return eventTime(b).compareTo(eventTime(a));
+          });
         if (docs.isEmpty) {
           return _detailSection('Status History', [
             _detailRow('History', 'Abhi koi status history nahi hai.'),
