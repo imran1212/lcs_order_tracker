@@ -2820,8 +2820,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  String _elapsedLabel(DateTime? from) {
+    if (from == null) return 'Time elapsed unavailable';
+    final elapsed = DateTime.now().difference(from);
+    if (elapsed.isNegative) return 'Updated time is in the future';
+    final days = elapsed.inDays;
+    final hours = elapsed.inHours % 24;
+    if (days > 0) return '${days}d ${hours}h ago';
+    if (elapsed.inHours > 0) return '${elapsed.inHours}h ago';
+    if (elapsed.inMinutes > 0) return '${elapsed.inMinutes}m ago';
+    return 'Just now';
+  }
+
   Widget _orderCard(OrderData order) {
     final color = statusColor(order.status);
+    final elapsedFrom = order.statusDate ?? order.bookingDate;
     final canEdit = isAdmin || order.workerUid == workerUid;
 
     return InkWell(
@@ -2870,6 +2883,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
                 _statusBadge(order.status, color),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    '${order.statusDate != null ? 'Status age' : 'Booking age'}: ${_elapsedLabel(elapsedFrom)}',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Color(0xFF64716D)),
               ],
             ),
             const SizedBox(height: 14),
