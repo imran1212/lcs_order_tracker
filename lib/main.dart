@@ -3353,6 +3353,35 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
+  Future<void> editWorkerName(String uid, String currentName) async {
+    final controller = TextEditingController(text: currentName);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit Worker Name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Worker name', prefixIcon: Icon(Icons.person_outline_rounded)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+        ],
+      ),
+    );
+    final name = controller.text.trim();
+    controller.dispose();
+    if (confirmed != true || name.isEmpty) return;
+    try {
+      await users.doc(uid).update({'name': name});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker name updated.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Name update failed: $e')));
+    }
+  }
+
   Future<void> toggleWorker(String uid, bool active) async {
     try {
       await users.doc(uid).update({'active': !active});
@@ -3466,9 +3495,19 @@ class _AdminScreenState extends State<AdminScreen> {
                     '@$username\n${active ? 'Active' : 'Disabled'}',
                   ),
                   isThreeLine: true,
-                  trailing: Switch(
-                    value: active,
-                    onChanged: (value) => toggleWorker(doc.id, active),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Edit worker name',
+                        onPressed: loading ? null : () => editWorkerName(doc.id, name),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      Switch(
+                        value: active,
+                        onChanged: (value) => toggleWorker(doc.id, active),
+                      ),
+                    ],
                   ),
                 ),
               );
