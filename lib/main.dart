@@ -3012,6 +3012,62 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
+
+  Future<void> editWorker(String uid, Map<String, dynamic> data) async {
+    final controller = TextEditingController(text: (data['name'] ?? '').toString());
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit Worker'),
+        content: TextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Worker display name', prefixIcon: Icon(Icons.person_outline_rounded)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+        ],
+      ),
+    );
+    final name = controller.text.trim();
+    controller.dispose();
+    if (ok != true || name.isEmpty) return;
+    try {
+      await users.doc(uid).update({'name': name, 'updatedAt': FieldValue.serverTimestamp()});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker profile updated.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker edit failed. Firestore permissions check karein.')));
+    }
+  }
+
+  Future<void> deleteWorker(String uid, String username) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Disable / remove worker?'),
+        content: Text('Worker @' + username + ' ka access band hoga. Existing orders aur history preserve rahengi. Current setup mein Auth account permanently delete nahi hota; account ko disabled mark kiya jayega.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB42318)), child: const Text('Disable worker')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await users.doc(uid).update({
+        'active': false,
+        'deleted': true,
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker access disabled; records preserved.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker disable nahi hua. Firestore permissions check karein.')));
+    }
+  }
+
   Future<void> toggleWorker(String uid, bool active) async {
     try {
       await users.doc(uid).update({'active': !active});
@@ -3073,7 +3129,7 @@ class _AdminScreenState extends State<AdminScreen> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final docs = snapshot.data?.docs ?? [];
+          final docs = (snapshot.data?.docs ?? []).where((doc) => doc.data()['deleted'] != true).toList();
 
           if (docs.isEmpty) {
             return const Center(
@@ -3125,9 +3181,24 @@ class _AdminScreenState extends State<AdminScreen> {
                     '@$username\n${active ? 'Active' : 'Disabled'}',
                   ),
                   isThreeLine: true,
-                  trailing: Switch(
-                    value: active,
-                    onChanged: (value) => toggleWorker(doc.id, active),
+                  trailing: Wrap(
+                    spacing: 0,
+                    children: [
+                      IconButton(
+                        tooltip: 'Edit worker',
+                        onPressed: loading ? null : () => editWorker(doc.id, data),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Disable worker',
+                        onPressed: loading ? null : () => deleteWorker(doc.id, username),
+                        icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFB42318)),
+                      ),
+                      Switch(
+                        value: active,
+                        onChanged: (value) => toggleWorker(doc.id, active),
+                      ),
+                    ],
                   ),
                 ),
               );
