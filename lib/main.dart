@@ -515,6 +515,7 @@ enum LcsDashboardStatusCategory {
   arrivedAtStation,
   outForDelivery,
   assigned,
+  deliveryAttempting,
   deliveryIssue,
   readyToReturn,
   delivered,
@@ -556,8 +557,23 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
       status.contains('delivery failed') ||
       status.contains('customer not available') ||
       status.contains('incomplete address') ||
+      status.contains('delivery unsuccessful') ||
       status.contains('refused delivery')) {
     return LcsDashboardStatusCategory.deliveryIssue;
+  }
+  if (status.contains('delivery attempt') ||
+      status.contains('attempted delivery') ||
+      status.contains('delivery attempting') ||
+      status.contains('attempting delivery') ||
+      status.contains('reattempt') ||
+      status.contains('re-attempt') ||
+      status == 'attempted' ||
+      status == 'attempting' ||
+      status == 'pn1' ||
+      status == 'pn2' ||
+      status.startsWith('pn1 ') ||
+      status.startsWith('pn2 ')) {
+    return LcsDashboardStatusCategory.deliveryAttempting;
   }
   if (status.contains('arrived at station') ||
       status.contains('arrived in ') ||
@@ -601,6 +617,7 @@ bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
     'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
     'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
     'Assigned': LcsDashboardStatusCategory.assigned,
+    'Delivery Attempting': LcsDashboardStatusCategory.deliveryAttempting,
     'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
     'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
     'Delivered': LcsDashboardStatusCategory.delivered,
@@ -2281,6 +2298,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       {'title': 'Arrived at Station', 'value': count(LcsDashboardStatusCategory.arrivedAtStation), 'icon': Icons.location_on_rounded, 'color': const Color(0xFF2678E8)},
       {'title': 'Out for Delivery', 'value': count(LcsDashboardStatusCategory.outForDelivery), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFE99A13)},
       {'title': 'Assigned', 'value': count(LcsDashboardStatusCategory.assigned), 'icon': Icons.assignment_ind_rounded, 'color': const Color(0xFF0D8A55)},
+      {'title': 'Delivery Attempting', 'value': count(LcsDashboardStatusCategory.deliveryAttempting), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFDB8B16)},
       {'title': 'Delivery Issue', 'value': count(LcsDashboardStatusCategory.deliveryIssue), 'icon': Icons.warning_amber_rounded, 'color': const Color(0xFFE54858)},
       {'title': 'Ready to Return', 'value': count(LcsDashboardStatusCategory.readyToReturn), 'icon': Icons.assignment_return_rounded, 'color': const Color(0xFFF06435)},
       {'title': 'Delivered', 'value': count(LcsDashboardStatusCategory.delivered), 'icon': Icons.check_circle_rounded, 'color': const Color(0xFF159B63)},
@@ -2305,22 +2323,84 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (card['value'] as int).toString(),
         card['icon'] as IconData,
         card['color'] as Color,
+        onTap: () => _openStatusOrders(card['title'] as String, orders),
       )).toList(),
     );
+  }
+
+  Future<void> _openStatusOrders(String title, List<OrderData> allOrders) async {
+    final filtered = title == 'Total Orders'
+        ? allOrders
+        : allOrders.where((order) {
+            final category = classifyLcsDashboardStatus(order.status);
+            switch (title) {
+              case 'Pending Sync': return category == LcsDashboardStatusCategory.pendingSync;
+              case 'Pending / Booked': return category == LcsDashboardStatusCategory.pending;
+              case 'Shipment Picked': return category == LcsDashboardStatusCategory.shipmentPicked;
+              case 'In Transit / Dispatched': return category == LcsDashboardStatusCategory.inTransit;
+              case 'Arrived at Station': return category == LcsDashboardStatusCategory.arrivedAtStation;
+              case 'Out for Delivery': return category == LcsDashboardStatusCategory.outForDelivery;
+              case 'Assigned': return category == LcsDashboardStatusCategory.assigned;
+              case 'Delivery Attempting': return category == LcsDashboardStatusCategory.deliveryAttempting;
+              case 'Delivery Issue': return category == LcsDashboardStatusCategory.deliveryIssue;
+              case 'Ready to Return': return category == LcsDashboardStatusCategory.readyToReturn;
+              case 'Delivered': return category == LcsDashboardStatusCategory.delivered;
+              case 'Returned': return category == LcsDashboardStatusCategory.returned;
+              case 'Other Status': return category == LcsDashboardStatusCategory.other;
+              default: return false;
+            }
+          }).toList()
+      ..sort((a, b) {
+        final ad = a.statusDate ?? a.bookingDate;
+        final bd = b.statusDate ?? b.bookingDate;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return bd.compareTo(ad);
+      });
+    if (!mounted) return;
+    await Navigator.push<void>(context, MaterialPageRoute<void>(
+      builder: (_) => Scaffold(
+        backgroundColor: const Color(0xFFF2F7F4),
+        appBar: AppBar(title: Text('$title (${filtered.length})'), backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white),
+        body: filtered.isEmpty
+            ? const Center(child: Text('Is status mein koi order nahi mila.'))
+            : ListView.builder(
+                padding: const EdgeInsets.all(14),
+                itemCount: filtered.length,
+                itemBuilder: (_, index) => _orderCard(filtered[index]),
+              ),
+      ),
+    ));
+  }
+
+  String _elapsedLabel(DateTime? from) {
+    if (from == null) return 'Time elapsed unavailable';
+    final elapsed = DateTime.now().difference(from);
+    if (elapsed.isNegative) return 'Just now';
+    if (elapsed.inDays > 0) return '${elapsed.inDays}d ${elapsed.inHours % 24}h ago';
+    if (elapsed.inHours > 0) return '${elapsed.inHours}h ago';
+    if (elapsed.inMinutes > 0) return '${elapsed.inMinutes}m ago';
+    return 'Just now';
   }
 
   Widget _statCard(
     String title,
     String value,
     IconData icon,
-    Color color,
-  ) {
+    Color color, {
+    VoidCallback? onTap,
+  }) {
     final isTotal = title == 'Total Orders';
     final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
     final foreground = isTotal ? Colors.white : const Color(0xFF182522);
     final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
 
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
       decoration: BoxDecoration(
         color: cardBackground,
@@ -2386,11 +2466,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
+        ),
+      ),
     );
   }
 
   Widget _orderCard(OrderData order) {
     final color = statusColor(order.status);
+    final ageFrom = order.statusDate ?? order.bookingDate;
     final canEdit = isAdmin || order.workerUid == workerUid;
 
     return InkWell(
@@ -2439,6 +2522,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
                 _statusBadge(order.status, color),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 5),
+                Expanded(child: Text(
+                  '${order.statusDate != null ? 'Status age' : 'Booking age'}: ${_elapsedLabel(ageFrom)}',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 11, fontWeight: FontWeight.w700),
+                )),
+                const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Color(0xFF64716D)),
               ],
             ),
             const SizedBox(height: 14),
