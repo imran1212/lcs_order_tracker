@@ -1183,27 +1183,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } finally { if(mounted) setState(()=>_trackingAnyCn=false); }
   }
 
-  Widget _trackAnyCnCard() => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(22),
-      boxShadow: [BoxShadow(color: Colors.black.withOpacity(.035), blurRadius: 14, offset: const Offset(0,5))]),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Row(children: [Icon(Icons.travel_explore_rounded, color: Color(0xFF087A46), size: 27), SizedBox(width: 10),
-        Expanded(child: Text('Track Any SR / CN', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)))]),
-      const SizedBox(height: 8), const Text('Saved order hona zaroori nahi. SR/CN enter karke direct LCS tracking check karein.', style: TextStyle(color: Color(0xFF737B78))),
-      const SizedBox(height: 12),
-      TextField(controller: _trackAnyController, textCapitalization: TextCapitalization.characters, textInputAction: TextInputAction.go,
-        onSubmitted: (_) { if(!_trackingAnyCn) _trackAnyCn(); },
-        decoration: InputDecoration(hintText: 'Enter SR / CN number', prefixIcon: const Icon(Icons.search_rounded), filled: true, fillColor: const Color(0xFFF8FAF8),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)))),
-      const SizedBox(height: 10), SizedBox(width: double.infinity, child: FilledButton.icon(
-        onPressed: _trackingAnyCn ? null : _trackAnyCn,
-        icon: _trackingAnyCn ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2,color:Colors.white)) : const Icon(Icons.local_shipping_rounded),
-        label: Text(_trackingAnyCn ? 'Tracking...' : 'Track Shipment'),
-        style: FilledButton.styleFrom(backgroundColor: const Color(0xFF80590C), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical:14)))),
-    ]),
-  );
+  Widget _trackAnyCnCard() {
+    final ios = appPaletteIndex.value == 9;
+    final samsung = appPaletteIndex.value == 10;
+    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()];
+    final radius = ios ? 30.0 : (samsung ? 28.0 : 22.0);
+    return Container(
+      padding: EdgeInsets.all(ios ? 20 : 16),
+      decoration: BoxDecoration(
+        color: ios ? const Color(0xDFFFFFFF) : Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: ios ? const Color(0xFFFFFFFF) : (samsung ? const Color(0xFFE2E7F2) : const Color(0xFFF0F2F4))),
+        boxShadow: [BoxShadow(color: accent.withOpacity(ios ? .10 : .055), blurRadius: ios ? 28 : 16, offset: const Offset(0, 6))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 44, height: 44, decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [accent.withOpacity(.18), accent.withOpacity(.07)]),
+            borderRadius: BorderRadius.circular(ios ? 15 : 13)),
+            child: Icon(ios ? Icons.radar_rounded : (samsung ? Icons.travel_explore_rounded : Icons.local_shipping_rounded), color: accent, size: 25)),
+          const SizedBox(width: 11),
+          const Expanded(child: Text('Track Any SR / CN', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
+        ]),
+        const SizedBox(height: 8),
+        const Text('Saved order hona zaroori nahi. SR/CN enter karke direct LCS tracking check karein.', style: TextStyle(color: Color(0xFF737B78))),
+        const SizedBox(height: 12),
+        TextField(controller: _trackAnyController, textCapitalization: TextCapitalization.characters, textInputAction: TextInputAction.go,
+          onSubmitted: (_) { if (!_trackingAnyCn) _trackAnyCn(); },
+          decoration: InputDecoration(
+            hintText: 'Enter SR / CN number',
+            prefixIcon: Icon(Icons.search_rounded, color: accent),
+            filled: true,
+            fillColor: ios ? const Color(0xFFF0F5FC) : (samsung ? const Color(0xFFF2F5FC) : const Color(0xFFF8FAF8)),
+            contentPadding: const EdgeInsets.symmetric(vertical: 19, horizontal: 16),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(ios ? 22 : (samsung ? 24 : 15)), borderSide: BorderSide.none),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(ios ? 22 : (samsung ? 24 : 15)), borderSide: BorderSide(color: accent.withOpacity(ios || samsung ? .18 : .08))),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(ios ? 22 : (samsung ? 24 : 15)), borderSide: BorderSide(color: accent, width: 1.6)),
+          )),
+        const SizedBox(height: 12),
+        SizedBox(width: double.infinity, child: FilledButton.icon(
+          onPressed: _trackingAnyCn ? null : _trackAnyCn,
+          icon: _trackingAnyCn ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2,color:Colors.white)) : Icon(ios ? Icons.radar_rounded : Icons.local_shipping_rounded),
+          label: Text(_trackingAnyCn ? 'Tracking...' : 'Track Shipment'),
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: ios ? const Color(0xFF061B3D) : Colors.white,
+            elevation: ios ? 4 : 0,
+            shadowColor: accent.withOpacity(.28),
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(ios ? 24 : (samsung ? 22 : 15))),
+          ))),
+      ]),
+    );
+  }
 
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
     if (_bulkSyncingOrders) return;
@@ -2164,16 +2196,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF056839), Color(0xFF078B50), Color(0xFF18A968)],
-        ),
-        borderRadius: BorderRadius.circular(24),
+        gradient: appPaletteIndex.value == 9
+            ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
+                colors: [Color(0xFFFDFEFF), Color(0xFFE5F0FF), Color(0xFFD9E9FF)])
+            : appPaletteIndex.value == 10
+                ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
+                    colors: [Color(0xFF1428A0), Color(0xFF2E54C8), Color(0xFF5C7CFA)])
+                : appPaletteIndex.value == 8
+                    ? const LinearGradient(colors: [Color(0xFF20252D), Color(0xFF343B46)])
+                    : LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
+                        colors: [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Colors.white, .28)!]),
+        borderRadius: BorderRadius.circular(appPaletteIndex.value == 9 ? 32 : (appPaletteIndex.value == 10 ? 30 : 24)),
+        border: appPaletteIndex.value == 9 ? Border.all(color: Colors.white, width: 1.5) : null,
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF087A46).withOpacity(.22),
-            blurRadius: 20,
+            color: (appPaletteIndex.value == 9 ? const Color(0xFF007AFF) : aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()]).withOpacity(appPaletteIndex.value == 9 ? .14 : .22),
+            blurRadius: appPaletteIndex.value == 9 ? 30 : 20,
             offset: const Offset(0, 9),
           ),
         ],
@@ -2592,30 +2630,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     VoidCallback? onTap,
   }) {
     final isTotal = title == 'Total Orders';
-    final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
+    final ios = appPaletteIndex.value == 9;
+    final samsung = appPaletteIndex.value == 10;
+    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()];
+    final cardBackground = isTotal
+        ? (ios ? const Color(0xFF087AFF) : (samsung ? const Color(0xFF1428A0) : accent))
+        : (ios ? const Color(0xDFFFFFFF) : Colors.white);
     final foreground = isTotal ? Colors.white : const Color(0xFF182522);
     final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
+    final cardRadius = ios ? 28.0 : (samsung ? 30.0 : 22.0);
 
     return Material(color: Colors.transparent, child: InkWell(
-      onTap: onTap, borderRadius: BorderRadius.circular(22),
+      onTap: onTap, borderRadius: BorderRadius.circular(cardRadius),
       child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
+      padding: EdgeInsets.symmetric(horizontal: ios ? 14 : 11, vertical: ios ? 14 : 12),
       decoration: BoxDecoration(
         color: cardBackground,
-        gradient: isTotal
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF056839), Color(0xFF0B8B50), Color(0xFF18A968)],
-              )
-            : null,
-        borderRadius: BorderRadius.circular(22),
-        border: isTotal ? null : Border.all(color: color.withOpacity(.10), width: 1),
+        gradient: isTotal && !ios && !samsung
+            ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [accent, Color.lerp(accent, Colors.white, .20)!])
+            : (isTotal && ios ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF007AFF), Color(0xFF56A8FF)]) : null),
+        borderRadius: BorderRadius.circular(cardRadius),
+        border: isTotal ? (ios ? Border.all(color: Colors.white.withOpacity(.75), width: 1.4) : null) : Border.all(color: (ios || samsung ? accent : color).withOpacity(.16), width: 1),
         boxShadow: [
           BoxShadow(
-            color: (isTotal ? const Color(0xFF087A46) : color).withOpacity(isTotal ? .18 : .08),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
+            color: (isTotal ? accent : color).withOpacity(ios ? .12 : (isTotal ? .18 : .08)),
+            blurRadius: ios ? 24 : 14,
+            offset: const Offset(0, ios ? 8 : 5),
           ),
         ],
       ),
@@ -2626,9 +2666,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             height: 48,
             decoration: BoxDecoration(
               color: isTotal ? Colors.white.withOpacity(.16) : color.withOpacity(.12),
-              borderRadius: BorderRadius.circular(15),
+              borderRadius: BorderRadius.circular(ios ? 18 : (samsung ? 17 : 15)),
+              border: ios ? Border.all(color: Colors.white.withOpacity(.5)) : null,
             ),
-            child: Icon(icon, color: isTotal ? Colors.white : color, size: 25),
+            child: Icon(icon, color: isTotal ? Colors.white : (ios || samsung ? accent : color), size: 25),
           ),
           const SizedBox(width: 9),
           Expanded(
