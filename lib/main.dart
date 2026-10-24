@@ -93,8 +93,8 @@ void lcsBackgroundCallbackDispatcher() {
   });
 }
 
-const List<Color> aqasPaletteColors = [Color(0xFF087A46), Color(0xFF0878D1), Color(0xFF7C3AED), Color(0xFFF06423), Color(0xFFE11D48), Color(0xFFF0A500), Color(0xFF0D9488), Color(0xFF2746C7), Color(0xFF20252D)];
-const List<String> aqasPaletteNames = ['AQAS Green', 'Ocean Blue', 'Purple Pro', 'Sunset Orange', 'Rose Red', 'Amber Gold', 'Teal Mint', 'Indigo', 'Dark Mode'];
+const List<Color> aqasPaletteColors = [Color(0xFF087A46), Color(0xFF0878D1), Color(0xFF7C3AED), Color(0xFFF06423), Color(0xFFE11D48), Color(0xFFF0A500), Color(0xFF0D9488), Color(0xFF2746C7), Color(0xFF20252D), Color(0xFF007AFF), Color(0xFF1428A0)];
+const List<String> aqasPaletteNames = ['AQAS Green', 'Ocean Blue', 'Purple Pro', 'Sunset Orange', 'Rose Red', 'Amber Gold', 'Teal Mint', 'Indigo', 'Dark Mode', 'iOS 26+ • Liquid Glass', 'One UI 8.5+ • Samsung'];
 final ValueNotifier<int> appPaletteIndex = ValueNotifier<int>(0);
 
 void main() async {
@@ -167,15 +167,35 @@ class LcsOrderTrackerApp extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: appPaletteIndex,
       builder: (context, paletteIndex, _) {
-        final accent = aqasPaletteColors[paletteIndex.clamp(0, aqasPaletteColors.length - 1).toInt()];
+        final safeIndex = paletteIndex.clamp(0, aqasPaletteColors.length - 1).toInt();
+        final accent = aqasPaletteColors[safeIndex];
+        final isIosGlass = safeIndex == 9;
+        final isSamsungOneUi = safeIndex == 10;
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'LCS Tracker by AQAS',
+          title: 'LCS Tracker',
           theme: ThemeData(
             useMaterial3: true,
-            fontFamily: 'Roboto',
-            colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.light),
-            scaffoldBackgroundColor: const Color(0xFFF5F8F3),
+            fontFamily: isIosGlass ? '.SF Pro Display' : 'Roboto',
+            colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.light,
+              surface: isIosGlass ? const Color(0xFFF2F4F8) : (isSamsungOneUi ? const Color(0xFFF7F8FC) : Colors.white)),
+            scaffoldBackgroundColor: isIosGlass ? const Color(0xFFF2F4F8) : (isSamsungOneUi ? const Color(0xFFF7F8FC) : const Color(0xFFF5F8F3)),
+            appBarTheme: AppBarTheme(
+              backgroundColor: isIosGlass ? const Color(0xDDF8FAFF) : (isSamsungOneUi ? const Color(0xFFF7F8FC) : Colors.white),
+              surfaceTintColor: Colors.transparent, elevation: 0, centerTitle: isIosGlass,
+              titleTextStyle: TextStyle(color: const Color(0xFF111827), fontSize: isSamsungOneUi ? 22 : 20,
+                fontWeight: FontWeight.w800, fontFamily: isIosGlass ? '.SF Pro Display' : 'Roboto'),
+            ),
+            cardTheme: CardThemeData(
+              color: isIosGlass ? const Color(0xEFFFFFFF) : Colors.white,
+              elevation: isIosGlass ? 2 : (isSamsungOneUi ? 0 : 1),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(isIosGlass ? 26 : (isSamsungOneUi ? 28 : 18)),
+                side: isSamsungOneUi ? const BorderSide(color: Color(0xFFE4E8F2)) : BorderSide.none),
+            ),
+            navigationBarTheme: NavigationBarThemeData(
+              indicatorColor: accent.withOpacity(isIosGlass ? .16 : .12),
+              labelTextStyle: WidgetStatePropertyAll(TextStyle(fontWeight: FontWeight.w700, fontSize: isSamsungOneUi ? 12 : 11)),
+            ),
           ),
           home: const AuthGate(),
         );
@@ -1677,12 +1697,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
 
-                if (isAdmin) ...[
-                  const SizedBox(height: 14),
-                  Container(key: _reportsSectionKey),
-                  _workerPerformanceReport(
-                    docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
-                  ),
+                const SizedBox(height: 14),
+                Container(key: _reportsSectionKey),
+                if (_bottomNavIndex == 3) ...[
+                  _cityDeliveryReport(orders),
+                  if (isAdmin) ...[
+                    const SizedBox(height: 14),
+                    _workerPerformanceReport(orders),
+                  ],
+                ] else if (isAdmin) ...[
+                  _workerPerformanceReport(docs.map((doc) => OrderData.fromFirestore(doc)).toList()),
                 ],
 
                 const SizedBox(height: 14),
@@ -1979,12 +2003,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final ctx = _ordersSectionKey.currentContext;
             if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
           } else if (index == 3) {
-            final ctx = _reportsSectionKey.currentContext;
-            if (ctx != null) {
-              Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reports summary dashboard mein neeche hai.')));
-            }
+            _dashboardScrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
           } else if (index == 4) {
             _showColorPalette();
           }
@@ -2301,6 +2320,69 @@ class _DashboardScreenState extends State<DashboardScreen> {
         statusFilter != 'All' ||
         workerFilter != 'All' ||
         dateFilterType != 'Booking Date';
+  }
+
+  // LCS_CITY_DELIVERY_REPORT_V1: top 10 delivery destinations plus one Others total.
+  Widget _cityDeliveryReport(List<OrderData> filteredOrders) {
+    final deliveredByCity = <String, int>{};
+    var deliveredTotal = 0;
+    for (final order in filteredOrders) {
+      final status = order.status.toLowerCase().trim();
+      final isDelivered = (status.contains('delivered') && !status.contains('undelivered')) || status == 'delivery completed';
+      if (!isDelivered) continue;
+      final city = order.destination.trim().isEmpty ? 'Unknown city' : order.destination.trim();
+      deliveredByCity.update(city, (count) => count + 1, ifAbsent: () => 1);
+      deliveredTotal++;
+    }
+    final entries = deliveredByCity.entries.toList()
+      ..sort((a, b) { final byCount = b.value.compareTo(a.value); return byCount != 0 ? byCount : a.key.toLowerCase().compareTo(b.key.toLowerCase()); });
+    final topTen = entries.take(10).toList();
+    final otherCount = entries.skip(10).fold<int>(0, (sum, entry) => sum + entry.value);
+    final otherCities = entries.length > 10 ? entries.length - 10 : 0;
+    final maxCount = topTen.isEmpty ? 1 : topTen.first.value;
+    final accent = aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()];
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white,
+        borderRadius: BorderRadius.circular(appPaletteIndex.value == 9 ? 26 : 20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: appPaletteIndex.value == 9 ? [BoxShadow(color: const Color(0xFF007AFF).withOpacity(.08), blurRadius: 24, offset: const Offset(0, 8))] : null),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [Icon(Icons.location_city_rounded, color: accent, size: 25), const SizedBox(width: 9),
+          const Expanded(child: Text('Top 10 Delivery Cities', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)))]),
+        const SizedBox(height: 5),
+        Text('$deliveredTotal deliveries across ${entries.length} cities • delivered orders only', style: const TextStyle(fontSize: 11, color: Color(0xFF667085))),
+        const SizedBox(height: 14),
+        if (topTen.isEmpty)
+          const Padding(padding: EdgeInsets.symmetric(vertical: 18), child: Center(child: Text('Selected filters mein delivered orders nahi mile.')))
+        else
+          ...topTen.asMap().entries.map((ranked) {
+            final entry = ranked.value;
+            return Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(children: [
+              Row(children: [
+                Container(width: 26, height: 26, alignment: Alignment.center,
+                  decoration: BoxDecoration(color: accent.withOpacity(.10), borderRadius: BorderRadius.circular(9)),
+                  child: Text('${ranked.key + 1}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: accent))),
+                const SizedBox(width: 9),
+                Expanded(child: Text(entry.key, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
+                Text('${entry.value}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+              ]),
+              const SizedBox(height: 6),
+              ClipRRect(borderRadius: BorderRadius.circular(99), child: LinearProgressIndicator(value: entry.value / maxCount, minHeight: 6, backgroundColor: const Color(0xFFF0F2F5), color: accent)),
+            ]));
+          }),
+        if (otherCities > 0)
+          Container(margin: const EdgeInsets.only(top: 2), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(color: const Color(0xFFF2F4F7), borderRadius: BorderRadius.circular(13)),
+            child: Row(children: [
+              const Icon(Icons.more_horiz_rounded, color: Color(0xFF667085)), const SizedBox(width: 8),
+              Expanded(child: Text('Others • $otherCities cities', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800))),
+              Text('$otherCount', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+            ])),
+        const SizedBox(height: 8),
+        Text('Filters follow Dashboard Search, Status, Date Range${isAdmin ? ' and Worker' : ''}.', style: const TextStyle(fontSize: 10, color: Color(0xFF667085))),
+      ]),
+    );
   }
 
   // LCS_WORKER_PERFORMANCE_V1: admin report grouped by assigned worker.
