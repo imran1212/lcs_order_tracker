@@ -86,9 +86,14 @@ service cloud.firestore {
           (isAdmin() || ownsOrderData(parentOrderData()));
         allow update: if activeUser() &&
           (isAdmin() || ownsOrderData(parentOrderData())) &&
-          request.resource.data.get('cn', '') == resource.data.get('cn', '') &&
+          // Keep the event tied to its parent order. Legacy history documents
+          // may not have a cn field; permit adding it only when it matches
+          // the parent order's immutable CN.
+          request.resource.data.get('cn', '') == parentOrderData().get('cn', '') &&
+          (resource.data.get('cn', '') == parentOrderData().get('cn', '') ||
+            !resource.data.keys().hasAny(['cn'])) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'previousStatus', 'source', 'activityDate', 'recordedAt'
+            'cn', 'status', 'previousStatus', 'source', 'activityDate', 'recordedAt'
           ]);
         allow delete: if false;
       }
