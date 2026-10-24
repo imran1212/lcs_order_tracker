@@ -1883,12 +1883,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 const SizedBox(height: 10),
 
-                if (orders.isEmpty)
-                  _emptyState(hasActiveFilters: _hasActiveFilters())
-                else
-                  ...orders.map(
-                    (order) => _orderCard(order),
+                // Dashboard keeps search and filters available, but the full
+                // saved-order list belongs to the Orders bottom-navigation tab.
+                // If the user searches from Dashboard, show matching saved orders here.
+                if (_bottomNavIndex == 1 || searchText.trim().isNotEmpty) ...[
+                  if (orders.isEmpty)
+                    _emptyState(hasActiveFilters: _hasActiveFilters())
+                  else
+                    ...orders.map((order) => _orderCard(order)),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEAF2FF),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFC9DDFB)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.receipt_long_rounded, color: Color(0xFF2457A7), size: 26),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '${orders.length} matching saved order(s) • Tap Orders below to view the full list',
+                            style: const TextStyle(
+                              color: Color(0xFF2457A7),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: Color(0xFF2457A7)),
+                      ],
+                    ),
                   ),
+                ],
               ],
             ),
           );
