@@ -4394,12 +4394,29 @@ Future<void> _loadWorkerName() async {
       return;
     }
     try {
-      final batch = FirebaseFirestore.instance.batch();
-      final ordersCollection = FirebaseFirestore.instance.collection('orders');
-      for (final draft in valid) {
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUid == null) throw StateError('Login session expire ho gaya. Dobara login karein.');
+      final normalizedCns = valid.map((d) => (d['cn'] ?? '').toString().trim().toUpperCase()).toList();
+      if (normalizedCns.toSet().length != normalizedCns.length) {
+        throw StateError('Bulk receipts mein duplicate CN mila. Duplicate CN ko correct/remove karke dobara save karein.');
+      }
+      final invalidCn = normalizedCns.firstWhere(
+        (cn) => !RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn),
+        orElse: () => '',
+      );
+      if (invalidCn.isNotEmpty) {
+        throw StateError('CN format invalid hai: $invalidCn. Sirf A-Z, 0-9, dot, underscore aur hyphen allowed hain.');
+      }
+
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      final ordersCollection = db.collection('orders');
+      for (var i = 0; i < valid.length; i++) {
+        final draft = valid[i];
         final ref = ordersCollection.doc();
         final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = (draft['cn'] ?? '').toString().trim();
+        final cn = normalizedCns[i];
+
         batch.set(ref, {
           'customer': (draft['customer'] ?? '').toString().trim(),
           'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
@@ -4419,6 +4436,13 @@ Future<void> _loadWorkerName() async {
           'receiptImageName': (draft['imagePath'] ?? '').toString(),
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(db.collection('cnRegistry').doc(cn), {
+          'cn': cn,
+          'orderId': ref.id,
+          'workerUid': widget.workerUid,
+          'createdBy': currentUid,
+          'createdAt': FieldValue.serverTimestamp(),
         });
         batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
           'cn': cn,
@@ -4460,12 +4484,20 @@ Future<void> _loadWorkerName() async {
     final finalBookingDate = bookingDate ?? DateTime.now();
 
     try {
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUid == null) throw StateError('Login session expire ho gaya. Dobara login karein.');
+      final cn = cnController.text.trim().toUpperCase();
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+        throw StateError('CN format invalid hai. Sirf A-Z, 0-9, dot, underscore aur hyphen allowed hain.');
+      }
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
 
-      await orderRef.set({
+      batch.set(orderRef, {
         'customer': customerController.text.trim(),
         'customerPhone': customerPhoneController.text.trim(),
-        'cn': cnController.text.trim(),
+        'cn': cn,
         'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
         'amount': amount,
         'status': 'Pending API Sync',
@@ -4481,18 +4513,22 @@ Future<void> _loadWorkerName() async {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-
-      // LCS_STATUS_HISTORY_V1: save the initial order status.
-      await orderRef.collection('lcsStatusHistory')
-          .doc('order_created_pending')
-          .set({
-        'cn': cnController.text.trim(),
+      batch.set(db.collection('cnRegistry').doc(cn), {
+        'cn': cn,
+        'orderId': orderRef.id,
+        'workerUid': widget.workerUid,
+        'createdBy': currentUid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      batch.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+        'cn': cn,
         'previousStatus': '',
         'status': 'Pending API Sync',
         'source': 'order_created',
         'activityDate': Timestamp.fromDate(finalBookingDate),
         'recordedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      });
+      await batch.commit();
 
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
@@ -4507,7 +4543,7 @@ Future<void> _loadWorkerName() async {
       // Keep the order saved even if the courier API is temporarily unavailable.
       String? syncWarning;
       try {
-        final result = await LcsApiService.syncCn(cnController.text.trim());
+        final result = await LcsApiService.syncCn(cn);
         await orderRef.update({
           'status': result.status,
           'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
