@@ -2003,7 +2003,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final ctx = _ordersSectionKey.currentContext;
             if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
           } else if (index == 3) {
-            _dashboardScrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final ctx = _reportsSectionKey.currentContext;
+              if (ctx != null && mounted) {
+                Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: .05);
+              }
+            });
           } else if (index == 4) {
             _showColorPalette();
           }
@@ -2039,9 +2044,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('App Color Palette', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                const Text('App Themes & Appearance', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 4),
-                const Text('Dashboard aur app accent color choose karein.'),
+                const Text('Complete visual style choose karein: color palettes, iOS Liquid Glass, ya Samsung One UI.'),
                 const SizedBox(height: 18),
                 GridView.builder(
                   shrinkWrap: true,
@@ -2090,7 +2095,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 SizedBox(width: double.infinity, child: FilledButton.icon(
                   onPressed: () => Navigator.pop(sheetContext),
                   icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Apply Selected Theme'),
+                  label: const Text('Apply Selected Appearance'),
                   style: FilledButton.styleFrom(backgroundColor: aqasPaletteColors[appPaletteIndex.value], foregroundColor: Colors.white),
                 )),
               ],
