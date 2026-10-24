@@ -260,10 +260,14 @@ class LcsApiService {
       key.toString().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 
   static dynamic _mapValue(Map map, List<String> aliases) {
-    final wanted = aliases.map(_normalizedKey).toSet();
-    for (final entry in map.entries) {
-      if (wanted.contains(_normalizedKey(entry.key)) && entry.value != null) {
-        return entry.value;
+    // Alias order is intentional: prefer precise/current fields over generic
+    // fallback fields when the API returns several variants together.
+    for (final alias in aliases) {
+      final wanted = _normalizedKey(alias);
+      for (final entry in map.entries) {
+        if (_normalizedKey(entry.key) == wanted && entry.value != null) {
+          return entry.value;
+        }
       }
     }
     return null;
@@ -441,12 +445,13 @@ class LcsApiService {
     }
 
     // Prefer the packet's explicit current status/reason for the summary.
-    final packetCurrentStatus = _mapValue(packet, [
-      'current_status_reason', 'currentStatusReason', 'Current Status/Reason',
-      'status_reason', 'statusReason', 'booked_packet_status',
-      'bookedPacketStatus', 'current_status', 'currentStatus',
-      'status_description', 'Status Description',
-    ]);
+    final packetCurrentStatus =
+        _mapValue(packet, [
+          'current_status_reason', 'currentStatusReason', 'Current Status/Reason',
+          'status_reason', 'statusReason', 'current_status', 'currentStatus',
+          'status_description', 'Status Description',
+        ]) ??
+        _mapValue(packet, ['booked_packet_status', 'bookedPacketStatus', 'status']);
     if (packetCurrentStatus != null &&
         packetCurrentStatus.toString().trim().isNotEmpty) {
       status = packetCurrentStatus.toString().trim();
