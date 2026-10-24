@@ -11,6 +11,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:share_plus/share_plus.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V2
@@ -1151,6 +1152,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey _ordersSectionKey = GlobalKey();
   final GlobalKey _reportsSectionKey = GlobalKey();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _trackAnyController = TextEditingController();
+  bool _trackingAnyCn = false;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
 
   @override
@@ -1215,8 +1218,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _statusNotificationSubscription?.cancel();
     _dashboardScrollController.dispose();
     _searchController.dispose();
+    _trackAnyController.dispose();
     super.dispose();
   }
+
+  Future<void> _trackAnyCn() async {
+    final cn = _trackAnyController.text.trim().toUpperCase();
+    if (cn.isEmpty || !RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Valid SR/CN number enter karein.')));
+      return;
+    }
+    setState(() => _trackingAnyCn = true);
+    try {
+      final result = await LcsApiService.syncCn(cn);
+      if (!mounted) return;
+      final history = result.rawPacket.entries.where((e) {
+        final key=e.key.toString().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'),'');
+        return key.contains('trackingdetail') || key.contains('trackinghistory') || key.contains('trackingdetails') || key=='history';
+      }).map((e)=>e.value).toList();
+      await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+        title: Text('Tracking • $cn', style: const TextStyle(fontWeight: FontWeight.w900)),
+        content: SizedBox(width: double.maxFinite, child: SingleChildScrollView(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Container(width: double.infinity, padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: const Color(0xFFE5F5EA), borderRadius: BorderRadius.circular(14)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Latest status from API', style: TextStyle(color: Color(0xFF267052))),
+                const SizedBox(height: 6), Text(result.status, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                Text(result.statusDate == null ? 'Date unavailable' : _formatDateTime(result.statusDate!)),
+              ])),
+            const SizedBox(height: 14), const Text('Tracking history / API details', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            if(history.isEmpty) const Text('API ne separate history fields return nahi kiye; latest status upar hai.')
+            else SelectableText(JsonEncoder.withIndent('  ').convert(history)),
+            const SizedBox(height: 10), const Text('Lookup saved as an order nahi hota.', style: TextStyle(color: Colors.grey)),
+          ],
+        ))),
+        actions: [TextButton(onPressed: ()=>Navigator.pop(dialogContext), child: const Text('Close'))],
+      ));
+    } catch(e) {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Tracking nahi ho saki: $e')));
+    } finally { if(mounted) setState(()=>_trackingAnyCn=false); }
+  }
+
+  Widget _trackAnyCnCard() => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(22),
+      boxShadow: [BoxShadow(color: Colors.black.withOpacity(.035), blurRadius: 14, offset: const Offset(0,5))]),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Row(children: [Icon(Icons.travel_explore_rounded, color: Color(0xFF087A46), size: 27), SizedBox(width: 10),
+        Expanded(child: Text('Track Any SR / CN', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)))]),
+      const SizedBox(height: 8), const Text('Saved order hona zaroori nahi. SR/CN enter karke direct LCS tracking check karein.', style: TextStyle(color: Color(0xFF737B78))),
+      const SizedBox(height: 12),
+      TextField(controller: _trackAnyController, textCapitalization: TextCapitalization.characters, textInputAction: TextInputAction.go,
+        onSubmitted: (_) { if(!_trackingAnyCn) _trackAnyCn(); },
+        decoration: InputDecoration(hintText: 'Enter SR / CN number', prefixIcon: const Icon(Icons.search_rounded), filled: true, fillColor: const Color(0xFFF8FAF8),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)))),
+      const SizedBox(height: 10), SizedBox(width: double.infinity, child: FilledButton.icon(
+        onPressed: _trackingAnyCn ? null : _trackAnyCn,
+        icon: _trackingAnyCn ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2,color:Colors.white)) : const Icon(Icons.local_shipping_rounded),
+        label: Text(_trackingAnyCn ? 'Tracking...' : 'Track Shipment'),
+        style: FilledButton.styleFrom(backgroundColor: const Color(0xFF80590C), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical:14)))),
+    ]),
+  );
 
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
     if (_bulkSyncingOrders) return;
@@ -1711,6 +1776,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
               children: [
                 _welcomeCard(),
+                const SizedBox(height: 16),
+                _trackAnyCnCard(),
                 const SizedBox(height: 16),
 
                 _statsRow(orders),
@@ -3432,6 +3499,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     super.dispose();
   }
 
+  bool _savingPreciseLocation = false;
+
+  Future<void> _savePreciseLocation() async {
+    if (_savingPreciseLocation) return;
+    setState(() => _savingPreciseLocation = true);
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) throw Exception('Phone ki Location/GPS setting on karein.');
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) throw Exception('Location permission allow nahi hui.');
+      if (permission == LocationPermission.deniedForever) throw Exception('Phone Settings mein app ki Location permission allow karein.');
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
+      );
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'deliveryLocation': {'latitude': position.latitude, 'longitude': position.longitude,
+          'accuracyMeters': position.accuracy, 'capturedAt': FieldValue.serverTimestamp(),
+          'capturedBy': FirebaseAuth.instance.currentUser?.uid ?? ''},
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Precise location order ke saath save ho gayi (accuracy ±${position.accuracy.toStringAsFixed(0)} m).')));
+    } catch(e) {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location save nahi hui: $e')));
+    } finally { if(mounted) setState(()=>_savingPreciseLocation=false); }
+  }
+
   Future<void> _saveReturnInvestigation() async {
     if (_savingReturnInvestigation) return;
     setState(() => _savingReturnInvestigation = true);
@@ -3519,6 +3612,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ),
           if (canEdit) ...[
+            const SizedBox(height: 10),
+            SizedBox(width: double.infinity, child: OutlinedButton.icon(
+              onPressed: _savingPreciseLocation ? null : _savePreciseLocation,
+              icon: _savingPreciseLocation ? const SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.my_location_rounded),
+              label: Text(_savingPreciseLocation ? 'Getting precise location...' : 'Save Precise GPS Location'),
+            )),
+            const SizedBox(height: 10),
+            if (data['deliveryLocation'] is Map)
+              Text('Saved GPS: ${(data['deliveryLocation'] as Map)['latitude']}, ${(data['deliveryLocation'] as Map)['longitude']}',
+                style: const TextStyle(fontSize:11,color:Color(0xFF64748B))),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
