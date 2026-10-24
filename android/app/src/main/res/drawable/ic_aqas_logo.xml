@@ -4,12 +4,23 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#006B3C" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#008C4A" android:pathData="M8,37L54,7 100,37v63H8z"/>
-    <path android:fillColor="#D7192D" android:pathData="M4,58 C4,43 27,38 54,38 C81,38 104,43 104,58 C104,74 81,80 54,80 C27,80 4,74 4,58z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M5,58 C5,44 28,39 54,39 C80,39 103,44 103,58 C103,73 80,79 54,79 C28,79 5,73 5,58z"/>
-    <path android:fillColor="#D7192D" android:pathData="M8,58 C8,46 29,42 54,42 C79,42 100,46 100,58 C100,70 79,76 54,76 C29,76 8,70 8,58z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M26,89h39v-4h-39z M31,84h7v-9h-7z M43,84h7v-9h-7z M55,84h7v-9h-7z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M65,85h15v-7h-15z M80,85h7v-5h-7z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M27,59l5,-9h5l5,9h-5l-2,-4 -2,4z M43,59l5,-9h5l5,9h-5l-2,-4 -2,4z M59,59l5,-9h5l5,9h-5l-2,-4 -2,4z"/>
+    <!-- Glossy AQAS green app tile -->
+    <path android:fillColor="#064E32" android:pathData="M22,2h64c12,0 20,8 20,20v64c0,12 -8,20 -20,20h-64c-12,0 -20,-8 -20,-20v-64c0,-12 8,-20 20,-20z"/>
+    <path android:fillColor="#087F4F" android:pathData="M22,5h64c10,0 17,7 17,17v27H5V22C5,12 12,5 22,5z"/>
+    <path android:fillColor="#119B60" android:pathData="M22,5h64c10,0 17,7 17,17v7H5v-7C5,12 12,5 22,5z"/>
+    <!-- Subtle top gloss reflection -->
+    <path android:fillColor="#33FFFFFF" android:pathData="M22,5h64c10,0 17,7 17,17v4H5v-4C5,12 12,5 22,5z"/>
+    <!-- AQAS red and gold badge -->
+    <path android:fillColor="#F4C32F" android:pathData="M9,43 C9,34 26,30 54,30 C82,30 99,34 99,43 L99,67 C99,77 82,81 54,81 C26,81 9,77 9,67z"/>
+    <path android:fillColor="#C9142E" android:pathData="M9,40 C9,31 26,27 54,27 C82,27 99,31 99,40 L99,62 C99,72 82,76 54,76 C26,76 9,72 9,62z"/>
+    <path android:fillColor="#F02A3F" android:pathData="M13,39 C16,32 34,30 54,30 C74,30 92,32 95,39 C82,35 68,35 54,35 C34,35 20,36 13,39z"/>
+    <!-- AQAS lettering rendered as clean geometric strokes -->
+    <path android:fillColor="#FFFFFF" android:pathData="M25,48l5,-10h4l5,10h-4l-1,-3h-5l-1,3z M31,42h2l-1,-2z M41,48l5,-10h4l5,10h-4l-1,-3h-5l-1,3z M47,42h2l-1,-2z M57,40c0,-2 2,-3 5,-3h7v3h-7v2h5c2,0 3,1 3,3s-2,3 -5,3h-8v-3h8v-1h-5c-3,0 -4,-1 -4,-4z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M25,59l5,-9h4l5,9h-4l-1,-3h-5l-1,3z M31,54h2l-1,-2z M41,59l5,-9h4l5,9h-4l-1,-3h-5l-1,3z M47,54h2l-1,-2z M57,52c0,-2 2,-3 5,-3h7v3h-7v2h5c2,0 3,1 3,3s-2,3 -5,3h-8v-3h8v-1h-5c-3,0 -4,-1 -4,-4z"/>
+    <!-- Small courier van at the bottom -->
+    <path android:fillColor="#FFFFFF" android:pathData="M31,83h30v-9H31z M61,77h8l6,6v9H61z"/>
+    <path android:fillColor="#BCEBD4" android:pathData="M65,79h4l3,4h-7z"/>
+    <path android:fillColor="#064E32" android:pathData="M37,89a4,4 0,1 0,8 0a4,4 0,1 0,-8 0 M63,89a4,4 0,1 0,8 0a4,4 0,1 0,-8 0"/>
+    <!-- Bottom edge highlight -->
+    <path android:fillColor="#66FFFFFF" android:pathData="M22,100h64c6,0 11,-3 14,-8c-2,12 -9,16 -20,16h-58c-11,0 -18,-7 -20,-16c4,5 10,8 20,8z"/>
 </vector>
