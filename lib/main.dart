@@ -3484,7 +3484,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 _detailRow('Last API Sync', _formatDateTime(order.lastApiSyncAt)),
               ]),
               const SizedBox(height: 14),
-              _statusHistorySection(widget.orderId),
+              _statusHistorySection(widget.orderId, currentStatus: order.status), 
               const SizedBox(height: 14),
               _returnInvestigationSection(order: order, data: doc.data() ?? <String, dynamic>{}, canEdit: canEdit),
               const SizedBox(height: 14),
@@ -3527,7 +3527,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   // LCS_STATUS_HISTORY_V1: live timeline for recorded status transitions.
-  Widget _statusHistorySection(String orderId) {
+  Widget _statusHistorySection(String orderId, {required String currentStatus}) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('orders')
@@ -3536,8 +3536,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
+          final errorCode = snapshot.error is FirebaseException
+              ? (snapshot.error as FirebaseException).code
+              : 'unknown';
           return _detailSection('Status History', [
-            _detailRow('History', 'Load nahi ho saki.'),
+            _detailRow('History', 'Load nahi ho saki ($errorCode).'),
           ]);
         }
         if (!snapshot.hasData) {
@@ -3570,31 +3573,57 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             _detailRow('History', 'Abhi koi status history nahi hai.'),
           ]);
         }
+        final normalizedCurrent = currentStatus.trim().toLowerCase();
+        final latestDoc = docs.isEmpty ? null : docs.first;
         return _detailSection('Status History', docs.map((doc) {
           final data = doc.data();
           final status = (data['status'] ?? 'Unknown').toString();
           final previous = (data['previousStatus'] ?? '').toString();
           final source = (data['source'] ?? 'tracking').toString();
+          final isCurrent = (latestDoc != null && doc.id == latestDoc.id) ||
+              status.trim().toLowerCase() == normalizedCurrent;
           final timeValue = data['activityDate'] ?? data['recordedAt'];
           DateTime? eventDate;
           if (timeValue is Timestamp) eventDate = timeValue.toDate();
           if (timeValue is DateTime) eventDate = timeValue;
           final dateText = eventDate == null ? 'Time unavailable' : _formatDateTime(eventDate);
           final title = previous.isEmpty ? status : '$previous → $status';
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(vertical: 5),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isCurrent ? const Color(0xFFE4F6EA) : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              border: isCurrent ? Border.all(color: const Color(0xFF13834B), width: 1.4) : null,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 3, right: 10),
-                  child: Icon(Icons.history_rounded, color: Color(0xFF1769E0), size: 20),
+                Padding(
+                  padding: const EdgeInsets.only(top: 3, right: 10),
+                  child: Icon(
+                    isCurrent ? Icons.check_circle_rounded : Icons.history_rounded,
+                    color: isCurrent ? const Color(0xFF13834B) : const Color(0xFF1769E0),
+                    size: 20,
+                  ),
                 ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                      if (isCurrent)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 4),
+                          child: Text('CURRENT / LATEST STATUS', style: TextStyle(
+                            color: Color(0xFF087A46), fontWeight: FontWeight.w800,
+                            fontSize: 11, letterSpacing: 0.5,
+                          )),
+                        ),
+                      Text(title, style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: isCurrent ? const Color(0xFF075D36) : const Color(0xFF202124),
+                      )),
                       const SizedBox(height: 3),
                       Text('$dateText • $source', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
                     ],
