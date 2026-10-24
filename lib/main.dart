@@ -2629,6 +2629,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openStatusOrders(String title, List<OrderData> allOrders) async {
+    final filtered = title == 'Total Orders'
+        ? allOrders
+        : allOrders.where((order) {
+            final category = classifyLcsDashboardStatus(order.status);
+            switch (title) {
+              case 'Pending Sync': return category == LcsDashboardStatusCategory.pendingSync;
+              case 'Pending / Booked': return category == LcsDashboardStatusCategory.pending;
+              case 'Shipment Picked': return category == LcsDashboardStatusCategory.shipmentPicked;
+              case 'In Transit / Dispatched': return category == LcsDashboardStatusCategory.inTransit;
+              case 'Arrived at Station': return category == LcsDashboardStatusCategory.arrivedAtStation;
+              case 'Out for Delivery': return category == LcsDashboardStatusCategory.outForDelivery;
+              case 'Assigned': return category == LcsDashboardStatusCategory.assigned;
+              case 'Delivery Issue': return category == LcsDashboardStatusCategory.deliveryIssue;
+              case 'Ready to Return': return category == LcsDashboardStatusCategory.readyToReturn;
+              case 'Delivered': return category == LcsDashboardStatusCategory.delivered;
+              case 'Returned': return category == LcsDashboardStatusCategory.returned;
+              case 'Other Status': return category == LcsDashboardStatusCategory.other;
+              default: return false;
+            }
+          }).toList()
+      ..sort((a, b) {
+        final aDate = a.statusDate ?? a.bookingDate;
+        final bDate = b.statusDate ?? b.bookingDate;
+        if (aDate == null) return 1;
+        if (bDate == null) return -1;
+        return aDate.compareTo(bDate);
+      });
+
+    if (!mounted) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (pageContext) => Scaffold(
+          backgroundColor: const Color(0xFFF2F7F4),
+          appBar: AppBar(
+            title: Text('$title (${filtered.length})'),
+            backgroundColor: const Color(0xFF087A46),
+            foregroundColor: Colors.white,
+          ),
+          body: filtered.isEmpty
+              ? const Center(child: Text('Is status mein koi order nahi mila.'))
+              : ListView.builder(
+                  padding: const EdgeInsets.all(14),
+                  itemCount: filtered.length,
+                  itemBuilder: (_, index) => _orderCard(filtered[index]),
+                ),
+        ),
+      ),
+    );
+  }
+
   Widget _statsRow(List<OrderData> orders) {
     final counts = <LcsDashboardStatusCategory, int>{};
     for (final order in orders) {
@@ -2671,6 +2723,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (card['value'] as int).toString(),
         card['icon'] as IconData,
         card['color'] as Color,
+        onTap: () => _openStatusOrders(card['title'] as String, orders),
       )).toList(),
     );
   }
@@ -2679,14 +2732,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String title,
     String value,
     IconData icon,
-    Color color,
-  ) {
+    Color color, {
+    VoidCallback? onTap,
+  }) {
     final isTotal = title == 'Total Orders';
     final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
     final foreground = isTotal ? Colors.white : const Color(0xFF182522);
     final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
 
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
       decoration: BoxDecoration(
         color: cardBackground,
@@ -2750,7 +2809,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
+          const Align(
+            alignment: Alignment.bottomRight,
+            child: Icon(Icons.arrow_forward_rounded, size: 17, color: Color(0xFF64716D)),
+          ),
         ],
+      ),
+        ),
       ),
     );
   }
