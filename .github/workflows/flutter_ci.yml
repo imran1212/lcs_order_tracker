@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/order-bulk-user-admin-public-tracking
+      - release/lcs-tracker-v1.0.8
     paths:
       - "lib/**"
       - "test/**"
@@ -43,10 +44,21 @@ jobs:
       - name: Build release APK for device testing
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
-      - name: Upload test APK
+      - name: Build release Android App Bundle
+        run: flutter build appbundle --release --no-pub
+
+      - name: Upload APK for phone testing
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-arm64-near-final-test-apk
+          name: lcs-tracker-v1.0.8-arm64-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload AAB build candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcs-tracker-v1.0.8-aab-candidate
+          path: build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 7
