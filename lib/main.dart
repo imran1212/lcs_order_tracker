@@ -1428,7 +1428,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final ageHours = since == null ? null : DateTime.now().difference(since).inHours;
             return Padding(
               padding: const EdgeInsets.only(top: 7),
-              child: Row(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => OrderDetailScreen(orderId: order.id, isAdmin: isAdmin, currentUid: workerUid),
+                )),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB42318)),
@@ -1446,6 +1453,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Text(ageHours < 0 ? 'Just now' : '${ageHours}h ago',
                       style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF912018))),
                 ],
+                  ),
+                ),
               ),
             );
           }),
