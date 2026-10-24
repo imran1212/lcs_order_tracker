@@ -91,7 +91,7 @@ jobs:
           AAB="build/app/outputs/bundle/release/app-release.aab"
           jarsigner -verify -verbose -certs "$AAB" >/dev/null
           keytool -printcert -jarfile "$AAB" | grep -F "$EXPECTED"
-          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)/apksigner verify --print-certs "$APK" | grep -F "$EXPECTED"
+          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)/apksigner verify --print-certs "$APK" | tr -d ':' | tr '[:lower:]' '[:upper:]' | grep -F "776D31CF38ED0275F7A0327B2BE4DC14ACE58222"
 
       - name: Upload signed APK and AAB
         uses: actions/upload-artifact@v4
