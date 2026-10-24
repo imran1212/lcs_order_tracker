@@ -1544,18 +1544,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final hours = DateTime.now().difference(since).inHours;
             return Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                children: [
-                  const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF92400E)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${order.cn} • ${order.status}',
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-                    ),
-                  ),
-                  Text('${hours}h', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF92400E))),
-                ],
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => OrderDetailScreen(orderId: order.id, isAdmin: isAdmin, currentUid: workerUid),
+                )),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(children: [
+                    const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF92400E)),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('${order.cn} • ${order.status}',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
+                    Text('${hours}h', style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF92400E))),
+                    const Icon(Icons.chevron_right_rounded, color: Color(0xFF92400E)),
+                  ]),
+                ),
               ),
             );
           }),
@@ -2503,6 +2507,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (card['value'] as int).toString(),
         card['icon'] as IconData,
         card['color'] as Color,
+        orders,
       )).toList(),
     );
   }
@@ -2512,13 +2517,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String value,
     IconData icon,
     Color color,
+    List<OrderData> allOrders,
   ) {
     final isTotal = title == 'Total Orders';
+    final categoryForTitle = <String, LcsDashboardStatusCategory>{
+      'Pending Sync': LcsDashboardStatusCategory.pendingSync,
+      'Pending / Booked': LcsDashboardStatusCategory.pending,
+      'Shipment Picked': LcsDashboardStatusCategory.shipmentPicked,
+      'In Transit / Dispatched': LcsDashboardStatusCategory.inTransit,
+      'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
+      'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
+      'Assigned': LcsDashboardStatusCategory.assigned,
+      'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
+      'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
+      'Delivered': LcsDashboardStatusCategory.delivered,
+      'Returned': LcsDashboardStatusCategory.returned,
+      'Other Status': LcsDashboardStatusCategory.other,
+    };
+    final filteredOrders = isTotal ? allOrders : allOrders.where((order) =>
+      classifyLcsDashboardStatus(order.status) == categoryForTitle[title]).toList();
     final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
     final foreground = isTotal ? Colors.white : const Color(0xFF182522);
     final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
 
-    return Container(
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+        StatusOrdersScreen(title: title, orders: filteredOrders, isAdmin: isAdmin, currentUid: workerUid))),
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
       decoration: BoxDecoration(
         color: cardBackground,
@@ -2582,7 +2608,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
+          const SizedBox(width: 2),
+          Icon(Icons.chevron_right_rounded, size: 20, color: isTotal ? Colors.white70 : color),
         ],
+      ),
       ),
     );
   }
@@ -3589,15 +3618,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             _detailRow('History', 'Abhi koi status history nahi hai.'),
           ]);
         }
-        final normalizedCurrent = currentStatus.trim().toLowerCase();
-        final latestDoc = docs.isEmpty ? null : docs.first;
+        // Exactly one highlighted courier event: latest API event when present.
+        final apiDocs = docs.where((doc) =>
+            (doc.data()['source'] ?? '').toString().toLowerCase() == 'lcs_api_history').toList();
+        final latestDoc = apiDocs.isNotEmpty ? apiDocs.first : docs.first;
         return _detailSection('Status History', docs.map((doc) {
           final data = doc.data();
           final status = (data['status'] ?? 'Unknown').toString();
           final previous = (data['previousStatus'] ?? '').toString();
           final source = (data['source'] ?? 'tracking').toString();
-          final isCurrent = (latestDoc != null && doc.id == latestDoc.id) ||
-              status.trim().toLowerCase() == normalizedCurrent;
+          final isCurrent = doc.id == latestDoc.id;
           final timeValue = data['activityDate'] ?? data['recordedAt'];
           DateTime? eventDate;
           if (timeValue is Timestamp) eventDate = timeValue.toDate();
@@ -3875,6 +3905,50 @@ Color statusColor(String status) {
     default:
       return const Color(0xFF087A46);
   }
+}
+
+class StatusOrdersScreen extends StatelessWidget {
+  final String title;
+  final List<OrderData> orders;
+  final bool isAdmin;
+  final String currentUid;
+  const StatusOrdersScreen({super.key, required this.title, required this.orders, required this.isAdmin, required this.currentUid});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFFF4F7F2),
+    appBar: AppBar(title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      backgroundColor: const Color(0xFFE0E9E0), surfaceTintColor: Colors.transparent),
+    body: orders.isEmpty ? const Center(child: Text('Is status mein koi order nahi mila.')) :
+      ListView.separated(
+        padding: const EdgeInsets.all(14), itemCount: orders.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (context, index) {
+          final order = orders[index];
+          return Material(color: Colors.white, borderRadius: BorderRadius.circular(16),
+            child: InkWell(borderRadius: BorderRadius.circular(16),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+                OrderDetailScreen(orderId: order.id, isAdmin: isAdmin, currentUid: currentUid))),
+              child: Padding(padding: const EdgeInsets.all(14),
+                child: Row(children: [
+                  const Icon(Icons.local_shipping_rounded, color: Color(0xFF087A46), size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(order.cn, style: const TextStyle(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(order.customer, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text(order.status, style: TextStyle(color: Colors.grey.shade700)),
+                    Text('Destination: ${order.destination.isEmpty ? 'Not available' : order.destination}',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                  ])),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF087A46), size: 26),
+                ])),
+            ));
+        },
+      ),
+  );
 }
 
 class OrderData {
