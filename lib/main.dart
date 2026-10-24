@@ -3596,22 +3596,43 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ]);
         }
+        final normalizedCurrent = currentStatus.trim().toLowerCase();
         final docs = snapshot.data!.docs.toList()
           ..sort((a, b) {
-            DateTime eventTime(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-              final data = doc.data();
-              final activity = data['activityDate'];
-              final recorded = data['recordedAt'];
-              if (activity is Timestamp) return activity.toDate();
-              if (activity is DateTime) return activity;
-              if (recorded is Timestamp) return recorded.toDate();
-              if (recorded is DateTime) return recorded;
-              return DateTime.fromMillisecondsSinceEpoch(0);
+            DateTime? activityTime(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+              final value = doc.data()['activityDate'];
+              if (value is Timestamp) return value.toDate();
+              if (value is DateTime) return value;
+              return null;
             }
-            // Put the most recent real tracking event first; use recordedAt only
-            // when an event has no activityDate. This keeps API and sync entries
-            // in one chronological timeline rather than grouping by write time.
-            return eventTime(b).compareTo(eventTime(a));
+            DateTime? recordedTime(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+              final value = doc.data()['recordedAt'];
+              if (value is Timestamp) return value.toDate();
+              if (value is DateTime) return value;
+              return null;
+            }
+            final aActivity = activityTime(a);
+            final bActivity = activityTime(b);
+            if (aActivity != null && bActivity != null) {
+              final byActivity = bActivity.compareTo(aActivity);
+              if (byActivity != 0) return byActivity;
+            } else if (aActivity != null) {
+              return -1;
+            } else if (bActivity != null) {
+              return 1;
+            }
+            // Date-only API events can share midnight timestamps. In that case,
+            // prefer the event matching the order's authoritative current status,
+            // then use record time as a deterministic fallback.
+            final aCurrent = (a.data()['status'] ?? '').toString().trim().toLowerCase() == normalizedCurrent;
+            final bCurrent = (b.data()['status'] ?? '').toString().trim().toLowerCase() == normalizedCurrent;
+            if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
+            final aRecorded = recordedTime(a);
+            final bRecorded = recordedTime(b);
+            if (aRecorded != null && bRecorded != null) return bRecorded.compareTo(aRecorded);
+            if (aRecorded != null) return -1;
+            if (bRecorded != null) return 1;
+            return b.id.compareTo(a.id);
           });
         if (docs.isEmpty) {
           return _detailSection('Status History', [
@@ -3621,7 +3642,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         // Exactly one highlighted courier event: latest API event when present.
         final apiDocs = docs.where((doc) =>
             (doc.data()['source'] ?? '').toString().toLowerCase() == 'lcs_api_history').toList();
-        final latestDoc = apiDocs.isNotEmpty ? apiDocs.first : docs.first;
+        final matchingCurrentApiDocs = apiDocs.where((doc) =>
+            (doc.data()['status'] ?? '').toString().trim().toLowerCase() == normalizedCurrent).toList();
+        final latestDoc = matchingCurrentApiDocs.isNotEmpty
+            ? matchingCurrentApiDocs.first
+            : (apiDocs.isNotEmpty ? apiDocs.first : docs.first);
         return _detailSection('Status History', docs.map((doc) {
           final data = doc.data();
           final status = (data['status'] ?? 'Unknown').toString();
