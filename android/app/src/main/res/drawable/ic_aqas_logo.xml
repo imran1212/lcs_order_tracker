@@ -4,12 +4,29 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#006B3C" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#008C4A" android:pathData="M8,37L54,7 100,37v63H8z"/>
-    <path android:fillColor="#D7192D" android:pathData="M4,58 C4,43 27,38 54,38 C81,38 104,43 104,58 C104,74 81,80 54,80 C27,80 4,74 4,58z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M5,58 C5,44 28,39 54,39 C80,39 103,44 103,58 C103,73 80,79 54,79 C28,79 5,73 5,58z"/>
-    <path android:fillColor="#D7192D" android:pathData="M8,58 C8,46 29,42 54,42 C79,42 100,46 100,58 C100,70 79,76 54,76 C29,76 8,70 8,58z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M26,89h39v-4h-39z M31,84h7v-9h-7z M43,84h7v-9h-7z M55,84h7v-9h-7z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M65,85h15v-7h-15z M80,85h7v-5h-7z"/>
-    <path android:fillColor="#FFFFD21C" android:pathData="M27,59l5,-9h5l5,9h-5l-2,-4 -2,4z M43,59l5,-9h5l5,9h-5l-2,-4 -2,4z M59,59l5,-9h5l5,9h-5l-2,-4 -2,4z"/>
+    <!-- AQAS deep-green app tile -->
+    <path android:fillColor="#064E35" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#087A46" android:pathData="M0,0h108v58c-20,13 -38,17 -54,10C32,60 16,62 0,74z"/>
+    <path android:fillColor="#0E9F6E" android:pathData="M8,8h92v92h-92z" android:strokeColor="#35C98B" android:strokeWidth="1.5"/>
+    <!-- Route line and location pin -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M59,23 C73,20 79,29 72,37 S60,49 74,55"/>
+    <path android:fillColor="#E11D2E" android:strokeColor="#FFFFFF" android:strokeWidth="1.4" android:pathData="M72,18 C65,18 61,23 61,29 C61,37 72,46 72,46 C72,46 83,36 83,29 C83,23 79,18 72,18z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M72,23a5,5 0,1 0,0.1 0z"/>
+    <!-- Parcel -->
+    <path android:fillColor="#F5C56B" android:strokeColor="#FFFFFF" android:strokeWidth="0.8" android:pathData="M62,57l18,-7 16,7 -18,8z"/>
+    <path android:fillColor="#D99A3D" android:pathData="M62,57l16,8v15l-16,-8z"/>
+    <path android:fillColor="#EAB354" android:pathData="M78,65l18,-8v15l-18,8z"/>
+    <path android:fillColor="#FFF0C2" android:pathData="M76,57l4,-2 4,2 -4,2z"/>
+    <!-- Delivery van/truck -->
+    <path android:fillColor="#FFFFFF" android:pathData="M10,39h35c3,0 5,2 5,5v20h-40z"/>
+    <path android:fillColor="#E8F4EF" android:pathData="M14,43h30v17h-30z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M50,49h13l9,10v10h-22z"/>
+    <path android:fillColor="#B9E7D3" android:pathData="M54,52h8l6,7h-14z"/>
+    <path android:fillColor="#FACC15" android:pathData="M10,61h40v4h-40z M50,65h22v4h-22z"/>
+    <path android:fillColor="#173B2E" android:pathData="M16,62a6,6 0,1 0,0.1 0z M58,68a6,6 0,1 0,0.1 0z"/>
+    <path android:fillColor="#D7F5E7" android:pathData="M16,62a3,3 0,1 0,0.1 0z M58,68a3,3 0,1 0,0.1 0z"/>
+    <!-- Bold LCS identity band -->
+    <path android:fillColor="#FACC15" android:pathData="M8,79h92v18h-92z"/>
+    <path android:fillColor="#D7192D" android:pathData="M8,79h92v4h-92z"/>
+    <path android:fillColor="#071A12" android:pathData="M18,84h4v9h-4z M25,84h3v9h-3z M31,84h4v3h-4z M31,89h4v4h-4z M38,84h4v9h-4z M45,84h4v9h-4z M52,84h4v3h-4z M52,89h4v4h-4z M59,84h4v9h-4z M66,84h4v9h-4z M73,84h4v3h-4z M73,89h4v4h-4z M80,84h4v9h-4z M87,84h4v9h-4z"/>
 </vector>
