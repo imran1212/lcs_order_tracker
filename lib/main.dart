@@ -1140,7 +1140,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       TextField(controller: _trackAnyController, textCapitalization: TextCapitalization.characters, textInputAction: TextInputAction.go,
         onSubmitted: (_) { if(!_trackingAnyCn) _trackAnyCn(); },
         decoration: InputDecoration(hintText: 'Enter SR / CN number', prefixIcon: const Icon(Icons.search_rounded), filled: true, fillColor: const Color(0xFFF8FAF8),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20, width: 1.5))),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)),
           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)))),
       const SizedBox(height: 10), SizedBox(width: double.infinity, child: FilledButton.icon(
         onPressed: _trackingAnyCn ? null : _trackAnyCn,
