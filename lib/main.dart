@@ -3373,31 +3373,42 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       final result = await LcsApiService.syncCn(order.cn);
       final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
       final previousStatus = order.status.trim();
-      await orderRef.update({
-        'status': result.status,
-        'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
-        'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
-        'lastApiSyncAt': FieldValue.serverTimestamp(),
-        'lcsRawStatus': result.status,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      await _saveApiTrackingEvents(orderRef, result, order.cn);
+      try {
+        await orderRef.update({
+          'status': result.status,
+          'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+          'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+          'lastApiSyncAt': FieldValue.serverTimestamp(),
+          'lcsRawStatus': result.status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        throw Exception('ORDER_UPDATE_DENIED: $e');
+      }
+      try {
+        await _saveApiTrackingEvents(orderRef, result, order.cn);
+      } catch (e) {
+        throw Exception('API_HISTORY_WRITE_DENIED: $e');
+      }
       if (previousStatus != result.status.trim()) {
-        // LCS_HISTORY_IDEMPOTENCY_V1: same status/date/source reuses the same document.
         final historyStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
         final historyTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
-        await orderRef.collection('lcsStatusHistory')
-            .doc('manual_${historyStatusKey}_$historyTimeKey')
-            .set({
-          'cn': order.cn,
-          'previousStatus': previousStatus,
-          'status': result.status.trim(),
-          'source': 'manual_sync',
-          'activityDate': result.statusDate == null
-              ? Timestamp.now()
-              : Timestamp.fromDate(result.statusDate!),
-          'recordedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        try {
+          await orderRef.collection('lcsStatusHistory')
+              .doc('manual_${historyStatusKey}_${historyTimeKey}')
+              .set({
+            'cn': order.cn,
+            'previousStatus': previousStatus,
+            'status': result.status.trim(),
+            'source': 'manual_sync',
+            'activityDate': result.statusDate == null
+                ? Timestamp.now()
+                : Timestamp.fromDate(result.statusDate!),
+            'recordedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          throw Exception('MANUAL_HISTORY_WRITE_DENIED: $e');
+        }
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
