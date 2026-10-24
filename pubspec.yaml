@@ -33,6 +33,7 @@ dependencies:
 
   firebase_core: ^4.15.0
   firebase_auth: ^6.7.0
+  firebase_storage: ^13.0.0
   cloud_firestore: ^6.10.0
   workmanager: ^0.10.10
   shared_preferences: ^2.5.4
