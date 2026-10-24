@@ -4254,9 +4254,6 @@ Future<void> _loadWorkerName() async {
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser == null) throw Exception('Pehle app mein login karein.');
-      if (widget.workerUid != currentUser.uid && !widget.isAdmin) {
-        throw Exception('Logged-in user aur selected worker match nahi karte. Logout/login karke dobara try karein.');
-      }
       final normalizedCns = <String>{};
       for (final draft in valid) {
         final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
@@ -4344,9 +4341,6 @@ Future<void> _loadWorkerName() async {
       final cn = cnController.text.trim().toUpperCase();
       if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
         throw Exception('CN mein sirf A-Z, 0-9, dot, underscore ya hyphen allowed hain.');
-      }
-      if (widget.workerUid != currentUser.uid && !widget.isAdmin) {
-        throw Exception('Logged-in user aur selected worker match nahi karte. Logout/login karke dobara try karein.');
       }
 
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
