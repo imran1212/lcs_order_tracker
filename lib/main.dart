@@ -2511,6 +2511,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
+          const SizedBox(width: 4),
+          Icon(Icons.chevron_right_rounded, size: 23, color: mutedForeground),
         ],
       ),
       ),
