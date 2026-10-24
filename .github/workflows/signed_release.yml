@@ -1,0 +1,106 @@
+name: LCS Tracker Signed Release (Upload Key Reset)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout prepared release branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/upload-key-signing-v1.0.8
+
+      - name: Verify Play Store package and Firebase config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, re, pathlib, sys
+          gradle = pathlib.Path("android/app/build.gradle.kts").read_text()
+          match = re.search(r'applicationId\s*=\s*"([^"]+)"', gradle)
+          if not match:
+              sys.exit("ERROR: Could not read applicationId from Gradle.")
+          app_id = match.group(1)
+          expected = "pk.aqas.lcstracker"
+          if app_id != expected:
+              sys.exit(f"ERROR: applicationId is {app_id}, expected Play Store ID {expected}.")
+          cfg = json.loads(pathlib.Path("android/app/google-services.json").read_text())
+          packages = [c.get("client_info", {}).get("android_client_info", {}).get("package_name")
+                      for c in cfg.get("client", [])]
+          if app_id not in packages:
+              sys.exit(
+                  "ERROR: google-services.json does not contain the Play Store package "
+                  f"{app_id}. Download the correct Android config from Firebase Console first. "
+                  f"Found: {packages}"
+              )
+          print(f"Package ID and Firebase config match: {app_id}")
+          PY
+
+      - name: Install approved upload keystore from GitHub Secrets
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.AQAS_UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.AQAS_UPLOAD_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.AQAS_UPLOAD_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.AQAS_UPLOAD_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64" || { echo "Missing AQAS_UPLOAD_KEYSTORE_BASE64 secret"; exit 1; }
+          test -n "$STORE_PASSWORD" || { echo "Missing AQAS_UPLOAD_STORE_PASSWORD secret"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing AQAS_UPLOAD_KEY_PASSWORD secret"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing AQAS_UPLOAD_KEY_ALIAS secret"; exit 1; }
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          EOF
+          keytool -list -v -keystore android/upload-keystore.jks -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" | grep -F "SHA1: 77:6D:31:CF:38:ED:02:75:F7:A0:32:7B:2B:E4:DC:14:AC:E5:82:22"
+
+      - name: Install Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart and Flutter source
+        run: flutter analyze --no-pub --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test --no-pub
+
+      - name: Build signed release APK
+        run: flutter build apk --release --no-pub
+
+      - name: Build signed release AAB
+        run: flutter build appbundle --release --no-pub
+
+      - name: Verify APK and AAB signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="77:6D:31:CF:38:ED:02:75:F7:A0:32:7B:2B:E4:DC:14:AC:E5:82:22"
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          AAB="build/app/outputs/bundle/release/app-release.aab"
+          jarsigner -verify -verbose -certs "$AAB" >/dev/null
+          keytool -printcert -jarfile "$AAB" | grep -F "$EXPECTED"
+          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)/apksigner verify --print-certs "$APK" | tr -d ':' | tr '[:lower:]' '[:upper:]' | grep -F "776D31CF38ED0275F7A0327B2BE4DC14ACE58222"
+
+      - name: Upload signed APK and AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCS-Tracker-1.0.11-build-12-signed
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
