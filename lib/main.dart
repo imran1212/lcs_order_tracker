@@ -1100,10 +1100,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final result = await LcsApiService.syncCn(cn);
       if (!mounted) return;
-      final history = result.rawPacket.entries.where((e) {
-        final key=e.key.toString().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'),'');
-        return key.contains('trackingdetail') || key.contains('trackinghistory') || key.contains('trackingdetails') || key=='history';
-      }).map((e)=>e.value).toList();
+      final history = LcsApiService._trackingEventMaps(result.rawPacket)
+          .map((event) => MapEntry(event, LcsApiService._eventStatusFromMap(event)))
+          .where((entry) => entry.value.trim().isNotEmpty)
+          .toList();
+      history.sort((a, b) {
+        final ad = LcsApiService._dateFromMap(a.key);
+        final bd = LcsApiService._dateFromMap(b.key);
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return bd.compareTo(ad);
+      });
       await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
         title: Text('Tracking • $cn', style: const TextStyle(fontWeight: FontWeight.w900)),
         content: SizedBox(width: double.maxFinite, child: SingleChildScrollView(child: Column(
@@ -1111,15 +1119,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Container(width: double.infinity, padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(color: const Color(0xFFE5F5EA), borderRadius: BorderRadius.circular(14)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Latest status from API', style: TextStyle(color: Color(0xFF267052))),
+                const Text('Current status', style: TextStyle(color: Color(0xFF267052))),
                 const SizedBox(height: 6), Text(result.status, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
                 Text(result.statusDate == null ? 'Date unavailable' : _formatDateTime(result.statusDate!)),
               ])),
-            const SizedBox(height: 14), const Text('Tracking history / API details', style: TextStyle(fontWeight: FontWeight.w900)),
-            const SizedBox(height: 6),
-            if(history.isEmpty) const Text('API ne separate history fields return nahi kiye; latest status upar hai.')
-            else SelectableText(JsonEncoder.withIndent('  ').convert(history)),
-            const SizedBox(height: 10), const Text('Lookup saved as an order nahi hota.', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 16),
+            const Text('Tracking history', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+            const SizedBox(height: 8),
+            if (history.isEmpty)
+              const Text('LCS ne history events return nahi kiye.')
+            else
+              ...history.map((entry) {
+                final event = entry.key;
+                final eventDate = LcsApiService._dateFromMap(event);
+                final status = entry.value;
+                final city = LcsApiService._mapValue(event, [
+                  'Status_With_City', 'statusWithCity', 'city', 'location', 'branch', 'station'
+                ])?.toString();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Padding(padding: EdgeInsets.only(top: 4), child: Icon(Icons.circle, size: 10, color: Color(0xFF16835B))),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(status, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                      if (city != null && city.trim().isNotEmpty && city.trim() != status)
+                        Padding(padding: const EdgeInsets.only(top: 2), child: Text(city, style: const TextStyle(color: Color(0xFF68736D), fontSize: 12))),
+                      const SizedBox(height: 3),
+                      Text(eventDate == null ? 'Date unavailable' : _formatDateTime(eventDate),
+                        style: const TextStyle(color: Color(0xFF68736D), fontSize: 12)),
+                    ])),
+                  ]),
+                );
+              }),
+            const SizedBox(height: 4),
+            const Text('Yeh lookup order ke taur par save nahi hota.', style: TextStyle(color: Colors.grey, fontSize: 12)),
           ],
         ))),
         actions: [TextButton(onPressed: ()=>Navigator.pop(dialogContext), child: const Text('Close'))],
@@ -4218,12 +4252,26 @@ Future<void> _loadWorkerName() async {
       return;
     }
     try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception('Pehle app mein login karein.');
+      if (widget.workerUid != currentUser.uid && !widget.isAdmin) {
+        throw Exception('Logged-in user aur selected worker match nahi karte. Logout/login karke dobara try karein.');
+      }
+      final normalizedCns = <String>{};
+      for (final draft in valid) {
+        final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
+        if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+          throw Exception('Invalid CN: $cn');
+        }
+        if (!normalizedCns.add(cn)) throw Exception('Bulk receipts mein duplicate CN hai: $cn');
+      }
       final batch = FirebaseFirestore.instance.batch();
       final ordersCollection = FirebaseFirestore.instance.collection('orders');
+      final registryCollection = FirebaseFirestore.instance.collection('cnRegistry');
       for (final draft in valid) {
         final ref = ordersCollection.doc();
         final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = (draft['cn'] ?? '').toString().trim();
+        final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
         batch.set(ref, {
           'customer': (draft['customer'] ?? '').toString().trim(),
           'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
@@ -4243,6 +4291,13 @@ Future<void> _loadWorkerName() async {
           'receiptImageName': (draft['imagePath'] ?? '').toString(),
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(registryCollection.doc(cn), {
+          'cn': cn,
+          'orderId': ref.id,
+          'workerUid': widget.workerUid,
+          'createdBy': currentUser.uid,
+          'createdAt': FieldValue.serverTimestamp(),
         });
         batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
           'cn': cn,
@@ -4284,12 +4339,24 @@ Future<void> _loadWorkerName() async {
     final finalBookingDate = bookingDate ?? DateTime.now();
 
     try {
-      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception('Pehle app mein login karein.');
+      final cn = cnController.text.trim().toUpperCase();
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+        throw Exception('CN mein sirf A-Z, 0-9, dot, underscore ya hyphen allowed hain.');
+      }
+      if (widget.workerUid != currentUser.uid && !widget.isAdmin) {
+        throw Exception('Logged-in user aur selected worker match nahi karte. Logout/login karke dobara try karein.');
+      }
 
-      await orderRef.set({
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
+      final registryRef = FirebaseFirestore.instance.collection('cnRegistry').doc(cn);
+      final batch = FirebaseFirestore.instance.batch();
+
+      batch.set(orderRef, {
         'customer': customerController.text.trim(),
         'customerPhone': customerPhoneController.text.trim(),
-        'cn': cnController.text.trim(),
+        'cn': cn,
         'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
         'amount': amount,
         'status': 'Pending API Sync',
@@ -4306,17 +4373,25 @@ Future<void> _loadWorkerName() async {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // LCS_STATUS_HISTORY_V1: save the initial order status.
-      await orderRef.collection('lcsStatusHistory')
-          .doc('order_created_pending')
-          .set({
-        'cn': cnController.text.trim(),
+      batch.set(registryRef, {
+        'cn': cn,
+        'orderId': orderRef.id,
+        'workerUid': widget.workerUid,
+        'createdBy': currentUser.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      batch.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+        'cn': cn,
         'previousStatus': '',
         'status': 'Pending API Sync',
         'source': 'order_created',
         'activityDate': Timestamp.fromDate(finalBookingDate),
         'recordedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      });
+
+      // Rules require order + CN reservation + initial history to be atomic.
+      await batch.commit();
 
       // Spark development mode: receipt images are used for OCR/review only.
       // Permanent Storage upload is intentionally disabled for now.
