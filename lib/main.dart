@@ -3879,7 +3879,7 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
   bool _ocrLoading = false;
   String _ocrMessage = '';
 
-// DIAG_SAVE_V1
+  // DIAG_SAVE_V1
   bool _saving = false;
 
   /// Runs one Firestore operation. If it fails, the label, plugin, code and
@@ -3932,6 +3932,9 @@ class _AddOrderSheetState extends State<AddOrderSheet> {
       ),
     );
   }
+
+
+// ----------------------------------------------------------------------
 
   Future<void> _pickReceiptImages() async {
     try {
@@ -4297,78 +4300,6 @@ Future<void> _loadWorkerName() async {
     });
   }
 
-Future<void> _saveBulkReceiptOrders() async { ... })
-//   EDIT 1: INSERT  after line 3880  (String _ocrMessage = '';)
-//
-// No new imports needed: Firebase / FirebaseException (firebase_core),
-// FirebaseAuth, FirebaseFirestore, material widgets and debugPrint are
-// already imported at the top of main.dart.
-// ======================================================================
-
-
-// ----------------------------------------------------------------------
-// EDIT 1 — INSERT right after:   String _ocrMessage = '';
-// ----------------------------------------------------------------------
-
-  // DIAG_SAVE_V1
-  bool _saving = false;
-
-  /// Runs one Firestore operation. If it fails, the label, plugin, code and
-  /// message are all kept in the thrown error (nothing is hidden).
-  Future<T> _diagStep<T>(String label, Future<T> Function() action) async {
-    try {
-      return await action();
-    } on FirebaseException catch (e) {
-      throw Exception('[$label] ${e.plugin}/${e.code}: ${e.message}');
-    } catch (e) {
-      throw Exception('[$label] ${e.runtimeType}: $e');
-    }
-  }
-
-  /// Read-only snapshot of exactly what the security rules will see.
-  Future<String> _diagPreflight() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw Exception('[P0 auth] Pehle app mein login karein.');
-    final snap = await _diagStep(
-      'P1 read users/${user.uid}',
-      () => FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
-    );
-    final d = snap.data() ?? <String, dynamic>{};
-    final active = d['active'];
-    final role = d['role'];
-    return 'project=${Firebase.app().options.projectId}\n'
-        'authUid=${user.uid}\n'
-        'widget.workerUid=${widget.workerUid}\n'
-        'uidMatch=${user.uid == widget.workerUid}\n'
-        'profileExists=${snap.exists}\n'
-        'active=$active (${active.runtimeType}) rulesOk=${active == true}\n'
-        'role="$role" (${role.runtimeType}) roleOk=${role == 'worker' || role == 'admin'}';
-  }
-
-  /// Selectable dialog so the full error can be read / screenshotted.
-  Future<void> _diagShow(String title, String body) async {
-    debugPrint('DIAG $title: $body');
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: SingleChildScrollView(child: SelectableText(body)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-
-// ----------------------------------------------------------------------
-// EDIT 2 — REPLACE the whole existing  Future<void> _saveBulkReceiptOrders() async { ... }
-// ----------------------------------------------------------------------
-
   Future<void> _saveBulkReceiptOrders() async {
     final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
     if (valid.isEmpty) {
@@ -4472,6 +4403,9 @@ Future<void> _saveBulkReceiptOrders() async { ... })
       await _diagShow('Bulk orders save nahi huay', '$e\n\n--- preflight ---\n$preflight');
     }
   }
+
+
+// ----------------------------------------------------------------------
 
   Future<void> _saveSingleOrder() async {
     if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
@@ -4643,7 +4577,10 @@ Future<void> _saveBulkReceiptOrders() async { ... })
     }
   }
 
-    @override
+
+// ----------------------------------------------------------------------
+
+  @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
 
