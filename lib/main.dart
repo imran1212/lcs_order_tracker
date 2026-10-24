@@ -624,6 +624,7 @@ enum LcsDashboardStatusCategory {
   arrivedAtStation,
   outForDelivery,
   assigned,
+  deliveryAttempting,
   deliveryIssue,
   readyToReturn,
   delivered,
@@ -665,8 +666,23 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
       status.contains('delivery failed') ||
       status.contains('customer not available') ||
       status.contains('incomplete address') ||
+      status.contains('delivery unsuccessful') ||
       status.contains('refused delivery')) {
     return LcsDashboardStatusCategory.deliveryIssue;
+  }
+  if (status.contains('delivery attempt') ||
+      status.contains('attempted delivery') ||
+      status.contains('delivery attempting') ||
+      status.contains('attempting delivery') ||
+      status.contains('reattempt') ||
+      status.contains('re-attempt') ||
+      status == 'attempted' ||
+      status == 'attempting' ||
+      status == 'pn1' ||
+      status == 'pn2' ||
+      status.startsWith('pn1 ') ||
+      status.startsWith('pn2 ')) {
+    return LcsDashboardStatusCategory.deliveryAttempting;
   }
   if (status.contains('arrived at station') ||
       status.contains('arrived in ') ||
@@ -710,6 +726,7 @@ bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
     'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
     'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
     'Assigned': LcsDashboardStatusCategory.assigned,
+    'Delivery Attempting': LcsDashboardStatusCategory.deliveryAttempting,
     'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
     'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
     'Delivered': LcsDashboardStatusCategory.delivered,
@@ -2642,6 +2659,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               case 'Arrived at Station': return category == LcsDashboardStatusCategory.arrivedAtStation;
               case 'Out for Delivery': return category == LcsDashboardStatusCategory.outForDelivery;
               case 'Assigned': return category == LcsDashboardStatusCategory.assigned;
+              case 'Delivery Attempting': return category == LcsDashboardStatusCategory.deliveryAttempting;
               case 'Delivery Issue': return category == LcsDashboardStatusCategory.deliveryIssue;
               case 'Ready to Return': return category == LcsDashboardStatusCategory.readyToReturn;
               case 'Delivered': return category == LcsDashboardStatusCategory.delivered;
@@ -2699,6 +2717,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       {'title': 'Arrived at Station', 'value': count(LcsDashboardStatusCategory.arrivedAtStation), 'icon': Icons.location_on_rounded, 'color': const Color(0xFF2678E8)},
       {'title': 'Out for Delivery', 'value': count(LcsDashboardStatusCategory.outForDelivery), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFE99A13)},
       {'title': 'Assigned', 'value': count(LcsDashboardStatusCategory.assigned), 'icon': Icons.assignment_ind_rounded, 'color': const Color(0xFF0D8A55)},
+      {'title': 'Delivery Attempting', 'value': count(LcsDashboardStatusCategory.deliveryAttempting), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFDB8B16)},
       {'title': 'Delivery Issue', 'value': count(LcsDashboardStatusCategory.deliveryIssue), 'icon': Icons.warning_amber_rounded, 'color': const Color(0xFFE54858)},
       {'title': 'Ready to Return', 'value': count(LcsDashboardStatusCategory.readyToReturn), 'icon': Icons.assignment_return_rounded, 'color': const Color(0xFFF06435)},
       {'title': 'Delivered', 'value': count(LcsDashboardStatusCategory.delivered), 'icon': Icons.check_circle_rounded, 'color': const Color(0xFF159B63)},
