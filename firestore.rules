@@ -43,10 +43,6 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/cnRegistry/$(cn)).data.get('orderId', '') == orderId;
     }
 
-    function parentOrderData() {
-      return get(/databases/$(database)/documents/orders/$(orderId)).data;
-    }
-
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
@@ -61,6 +57,12 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
+      // orderId is in scope here and in the nested lcsStatusHistory match.
+      // Keep this helper inside the order match so it resolves the correct parent.
+      function parentOrderData() {
+        return get(/databases/$(database)/documents/orders/$(orderId)).data;
+      }
+
       allow get, list: if canReadOrderData(resource.data);
 
       allow create: if activeUser() &&
