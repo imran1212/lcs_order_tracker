@@ -11,6 +11,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V1
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
@@ -3088,6 +3089,42 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     super.dispose();
   }
 
+  bool _savingPreciseLocation = false;
+
+  Future<void> _savePreciseLocation() async {
+    if (_savingPreciseLocation) return;
+    setState(() => _savingPreciseLocation = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) throw Exception('Phone ki Location/GPS setting on karein.');
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) throw Exception('Location permission allow nahi hui.');
+      if (permission == LocationPermission.deniedForever) throw Exception('Phone Settings mein app ki Location permission allow karein.');
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
+      );
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'deliveryLocation': {
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracyMeters': position.accuracy,
+          'capturedAt': FieldValue.serverTimestamp(),
+          'capturedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+        },
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Precise location order ke saath save ho gayi (accuracy ±${position.accuracy.toStringAsFixed(0)} m).'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location save nahi hui: $e')));
+    } finally {
+      if (mounted) setState(() => _savingPreciseLocation = false);
+    }
+  }
+
   Future<void> _saveReturnInvestigation() async {
     if (_savingReturnInvestigation) return;
     setState(() => _savingReturnInvestigation = true);
@@ -3175,6 +3212,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ),
           if (canEdit) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _savingPreciseLocation ? null : _savePreciseLocation,
+                icon: _savingPreciseLocation
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.my_location_rounded),
+                label: Text(_savingPreciseLocation ? 'Getting precise location...' : 'Save Precise GPS Location'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (data['deliveryLocation'] is Map)
+              Text('Saved GPS: ${(data['deliveryLocation'] as Map)['latitude']}, ${(data['deliveryLocation'] as Map)['longitude']}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
