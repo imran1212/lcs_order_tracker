@@ -328,60 +328,27 @@ class LcsApiService {
   }
 
   static String _eventStatusFromMap(Map map) {
-    // First inspect EVERY textual field for a terminal event. Some LCS API
-    // versions include a generic "status" (e.g. Arrived at Station) beside
-    // a more precise activity/remark (e.g. Returned to shipper).
-    final strings = map.values
-        .whereType<String>()
-        .map((value) => value.trim())
-        .where((value) => value.isNotEmpty)
-        .toList();
-
-    bool isReturnEvent(String value) {
-      final s = value.toLowerCase();
-      return s.contains('return to shipper') ||
-          s.contains('returned to shipper') ||
-          s.contains('returning to shipper') ||
-          s.contains('return to sender') ||
-          s.contains('returned to sender') ||
-          s.contains('returning to sender') ||
-          s.contains('returned to origin') ||
-          s.contains('return to origin') ||
-          s.contains('return shipment') ||
-          s == 'rts' ||
-          s.contains('collected');
-    }
-
-    for (final text in strings) {
-      if (isReturnEvent(text)) return text;
-    }
-    for (final text in strings) {
-      final normalized = text.toLowerCase();
-      if ((normalized.contains('delivered') && !normalized.contains('undelivered')) ||
-          normalized.contains('ready for return') ||
-          normalized.contains('ready to return')) return text;
-    }
-
+    // Use only fields that describe a tracking event; never infer a status from
+    // an arbitrary string such as a customer name, CN, or destination.
     final direct = _mapValue(map, [
-      'status', 'Staus', 'activity', 'tracking_status', 'Tracking Status',
-      'status_description', 'Status Description', 'event_status',
-      'description', 'remarks', 'remark', 'event_description',
-      'tracking_status_description',
+      'current_status_reason', 'currentStatusReason', 'Current Status/Reason',
+      'status_reason', 'statusReason', 'activity', 'event_status',
+      'tracking_status_description', 'status_description', 'Status Description',
+      'event_description', 'description', 'remarks', 'remark',
+      'tracking_status', 'Tracking Status', 'status', 'Staus',
     ]);
     if (direct != null && direct.toString().trim().isNotEmpty) {
       return direct.toString().trim();
     }
-    for (final text in strings) {
-      final normalized = text.toLowerCase();
-      if (normalized.contains('arrived at station') ||
-          normalized.contains('arrived in ') ||
-          normalized.contains('dispatched') ||
-          normalized.contains('shipment picked') ||
-          normalized.contains('out for delivery')) return text;
+    final activity = _mapValue(map, [
+      'activity_name', 'activityName', 'tracking_activity', 'event',
+      'tracking_event', 'movement', 'shipment_status',
+    ]);
+    if (activity != null && activity.toString().trim().isNotEmpty) {
+      return activity.toString().trim();
     }
     return '';
   }
-
   static Future<LcsSyncResult> syncCn(String cn) async {
     final response = await trackCn(cn);
     final packets = _maps(response['packet_list']);
@@ -471,6 +438,19 @@ class LcsApiService {
       status = undatedTerminalStatus;
     } else if (latestEventDate != null) {
       statusDate = latestEventDate;
+    }
+
+    // Prefer the packet's explicit current status/reason for the summary.
+    final packetCurrentStatus = _mapValue(packet, [
+      'current_status_reason', 'currentStatusReason', 'Current Status/Reason',
+      'status_reason', 'statusReason', 'booked_packet_status',
+      'bookedPacketStatus', 'current_status', 'currentStatus',
+      'status_description', 'Status Description',
+    ]);
+    if (packetCurrentStatus != null &&
+        packetCurrentStatus.toString().trim().isNotEmpty) {
+      status = packetCurrentStatus.toString().trim();
+      statusDate = _dateFromMap(packet) ?? statusDate;
     }
 
     final normalizedFinalStatus = status.toLowerCase().trim();
