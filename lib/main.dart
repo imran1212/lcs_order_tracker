@@ -11,6 +11,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 
 // LCS_BACKGROUND_AUTO_SYNC_V1
 const String _lcsBackgroundSyncTask = 'lcsOrderAutoSync';
@@ -515,6 +516,7 @@ enum LcsDashboardStatusCategory {
   arrivedAtStation,
   outForDelivery,
   assigned,
+  deliveryAttempting,
   deliveryIssue,
   readyToReturn,
   delivered,
@@ -556,8 +558,16 @@ LcsDashboardStatusCategory classifyLcsDashboardStatus(String rawStatus) {
       status.contains('delivery failed') ||
       status.contains('customer not available') ||
       status.contains('incomplete address') ||
+      status.contains('delivery unsuccessful') ||
       status.contains('refused delivery')) {
     return LcsDashboardStatusCategory.deliveryIssue;
+  }
+  if (status.contains('delivery attempt') || status.contains('attempted delivery') ||
+      status.contains('delivery attempting') || status.contains('attempting delivery') ||
+      status.contains('reattempt') || status.contains('re-attempt') ||
+      status == 'attempted' || status == 'attempting' || status == 'pn1' || status == 'pn2' ||
+      status.startsWith('pn1 ') || status.startsWith('pn2 ')) {
+    return LcsDashboardStatusCategory.deliveryAttempting;
   }
   if (status.contains('arrived at station') ||
       status.contains('arrived in ') ||
@@ -601,6 +611,7 @@ bool matchesLcsStatusFilter(String rawStatus, String selectedFilter) {
     'Arrived at Station': LcsDashboardStatusCategory.arrivedAtStation,
     'Out for Delivery': LcsDashboardStatusCategory.outForDelivery,
     'Assigned': LcsDashboardStatusCategory.assigned,
+    'Delivery Attempting': LcsDashboardStatusCategory.deliveryAttempting,
     'Delivery Issue': LcsDashboardStatusCategory.deliveryIssue,
     'Ready to Return': LcsDashboardStatusCategory.readyToReturn,
     'Delivered': LcsDashboardStatusCategory.delivered,
@@ -1017,6 +1028,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey _ordersSectionKey = GlobalKey();
   final GlobalKey _reportsSectionKey = GlobalKey();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _trackAnyController = TextEditingController();
+  bool _trackingAnyCn = false;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _ordersStream;
 
   @override
@@ -1073,8 +1086,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _statusNotificationSubscription?.cancel();
     _dashboardScrollController.dispose();
     _searchController.dispose();
+    _trackAnyController.dispose();
     super.dispose();
   }
+
+  Future<void> _trackAnyCn() async {
+    final cn = _trackAnyController.text.trim().toUpperCase();
+    if (cn.isEmpty || !RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Valid SR/CN number enter karein.')));
+      return;
+    }
+    setState(() => _trackingAnyCn = true);
+    try {
+      final result = await LcsApiService.syncCn(cn);
+      if (!mounted) return;
+      final history = result.rawPacket.entries.where((e) {
+        final key=e.key.toString().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'),'');
+        return key.contains('trackingdetail') || key.contains('trackinghistory') || key.contains('trackingdetails') || key=='history';
+      }).map((e)=>e.value).toList();
+      await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+        title: Text('Tracking • $cn', style: const TextStyle(fontWeight: FontWeight.w900)),
+        content: SizedBox(width: double.maxFinite, child: SingleChildScrollView(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Container(width: double.infinity, padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: const Color(0xFFE5F5EA), borderRadius: BorderRadius.circular(14)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Latest status from API', style: TextStyle(color: Color(0xFF267052))),
+                const SizedBox(height: 6), Text(result.status, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                Text(result.statusDate == null ? 'Date unavailable' : _formatDateTime(result.statusDate!)),
+              ])),
+            const SizedBox(height: 14), const Text('Tracking history / API details', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            if(history.isEmpty) const Text('API ne separate history fields return nahi kiye; latest status upar hai.')
+            else SelectableText(JsonEncoder.withIndent('  ').convert(history)),
+            const SizedBox(height: 10), const Text('Lookup saved as an order nahi hota.', style: TextStyle(color: Colors.grey)),
+          ],
+        ))),
+        actions: [TextButton(onPressed: ()=>Navigator.pop(dialogContext), child: const Text('Close'))],
+      ));
+    } catch(e) {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Tracking nahi ho saki: $e')));
+    } finally { if(mounted) setState(()=>_trackingAnyCn=false); }
+  }
+
+  Widget _trackAnyCnCard() => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(22),
+      boxShadow: [BoxShadow(color: Colors.black.withOpacity(.035), blurRadius: 14, offset: const Offset(0,5))]),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Row(children: [Icon(Icons.travel_explore_rounded, color: Color(0xFF087A46), size: 27), SizedBox(width: 10),
+        Expanded(child: Text('Track Any SR / CN', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)))]),
+      const SizedBox(height: 8), const Text('Saved order hona zaroori nahi. SR/CN enter karke direct LCS tracking check karein.', style: TextStyle(color: Color(0xFF737B78))),
+      const SizedBox(height: 12),
+      TextField(controller: _trackAnyController, textCapitalization: TextCapitalization.characters, textInputAction: TextInputAction.go,
+        onSubmitted: (_) { if(!_trackingAnyCn) _trackAnyCn(); },
+        decoration: InputDecoration(hintText: 'Enter SR / CN number', prefixIcon: const Icon(Icons.search_rounded), filled: true, fillColor: const Color(0xFFF8FAF8),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF8A6A20), width: 1.5)))),
+      const SizedBox(height: 10), SizedBox(width: double.infinity, child: FilledButton.icon(
+        onPressed: _trackingAnyCn ? null : _trackAnyCn,
+        icon: _trackingAnyCn ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2,color:Colors.white)) : const Icon(Icons.local_shipping_rounded),
+        label: Text(_trackingAnyCn ? 'Tracking...' : 'Track Shipment'),
+        style: FilledButton.styleFrom(backgroundColor: const Color(0xFF80590C), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical:14)))),
+    ]),
+  );
 
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
     if (_bulkSyncingOrders) return;
@@ -1544,6 +1619,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
               children: [
                 _welcomeCard(),
+                const SizedBox(height: 16),
+                _trackAnyCnCard(),
                 const SizedBox(height: 16),
 
                 _statsRow(orders),
@@ -2281,6 +2358,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       {'title': 'Arrived at Station', 'value': count(LcsDashboardStatusCategory.arrivedAtStation), 'icon': Icons.location_on_rounded, 'color': const Color(0xFF2678E8)},
       {'title': 'Out for Delivery', 'value': count(LcsDashboardStatusCategory.outForDelivery), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFE99A13)},
       {'title': 'Assigned', 'value': count(LcsDashboardStatusCategory.assigned), 'icon': Icons.assignment_ind_rounded, 'color': const Color(0xFF0D8A55)},
+      {'title': 'Delivery Attempting', 'value': count(LcsDashboardStatusCategory.deliveryAttempting), 'icon': Icons.delivery_dining_rounded, 'color': const Color(0xFFDB8B16)},
       {'title': 'Delivery Issue', 'value': count(LcsDashboardStatusCategory.deliveryIssue), 'icon': Icons.warning_amber_rounded, 'color': const Color(0xFFE54858)},
       {'title': 'Ready to Return', 'value': count(LcsDashboardStatusCategory.readyToReturn), 'icon': Icons.assignment_return_rounded, 'color': const Color(0xFFF06435)},
       {'title': 'Delivered', 'value': count(LcsDashboardStatusCategory.delivered), 'icon': Icons.check_circle_rounded, 'color': const Color(0xFF159B63)},
@@ -2305,22 +2383,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (card['value'] as int).toString(),
         card['icon'] as IconData,
         card['color'] as Color,
+        onTap: () => _openStatusOrders(card['title'] as String, orders),
       )).toList(),
     );
+  }
+
+  Future<void> _openStatusOrders(String title, List<OrderData> allOrders) async {
+    final filtered = title == 'Total Orders' ? allOrders : allOrders.where((order) {
+      final category = classifyLcsDashboardStatus(order.status);
+      switch (title) {
+        case 'Pending Sync': return category == LcsDashboardStatusCategory.pendingSync;
+        case 'Pending / Booked': return category == LcsDashboardStatusCategory.pending;
+        case 'Shipment Picked': return category == LcsDashboardStatusCategory.shipmentPicked;
+        case 'In Transit / Dispatched': return category == LcsDashboardStatusCategory.inTransit;
+        case 'Arrived at Station': return category == LcsDashboardStatusCategory.arrivedAtStation;
+        case 'Out for Delivery': return category == LcsDashboardStatusCategory.outForDelivery;
+        case 'Assigned': return category == LcsDashboardStatusCategory.assigned;
+        case 'Delivery Attempting': return category == LcsDashboardStatusCategory.deliveryAttempting;
+        case 'Delivery Issue': return category == LcsDashboardStatusCategory.deliveryIssue;
+        case 'Ready to Return': return category == LcsDashboardStatusCategory.readyToReturn;
+        case 'Delivered': return category == LcsDashboardStatusCategory.delivered;
+        case 'Returned': return category == LcsDashboardStatusCategory.returned;
+        case 'Other Status': return category == LcsDashboardStatusCategory.other;
+        default: return false;
+      }
+    }).toList()..sort((a,b) {
+      final ad=a.statusDate ?? a.bookingDate, bd=b.statusDate ?? b.bookingDate;
+      if(ad==null) return 1; if(bd==null) return -1; return bd.compareTo(ad);
+    });
+    if(!mounted) return;
+    await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => Scaffold(
+      backgroundColor: const Color(0xFFF2F7F4),
+      appBar: AppBar(title: Text('$title (${filtered.length})'), backgroundColor: const Color(0xFF087A46), foregroundColor: Colors.white),
+      body: filtered.isEmpty ? const Center(child: Text('Is status mein koi order nahi mila.')) :
+        ListView.builder(padding: const EdgeInsets.all(14), itemCount: filtered.length, itemBuilder: (_,i) => _orderCard(filtered[i])),
+    )));
+  }
+
+  String _elapsedLabel(DateTime? from) {
+    if(from==null) return 'Time elapsed unavailable';
+    final elapsed=DateTime.now().difference(from);
+    if(elapsed.isNegative) return 'Just now';
+    if(elapsed.inDays>0) return '${elapsed.inDays}d ${elapsed.inHours%24}h ago';
+    if(elapsed.inHours>0) return '${elapsed.inHours}h ago';
+    if(elapsed.inMinutes>0) return '${elapsed.inMinutes}m ago';
+    return 'Just now';
   }
 
   Widget _statCard(
     String title,
     String value,
     IconData icon,
-    Color color,
-  ) {
+    Color color, {
+    VoidCallback? onTap,
+  }) {
     final isTotal = title == 'Total Orders';
     final cardBackground = isTotal ? const Color(0xFF087A46) : Colors.white;
     final foreground = isTotal ? Colors.white : const Color(0xFF182522);
     final mutedForeground = isTotal ? Colors.white.withOpacity(.92) : const Color(0xFF64716D);
 
-    return Container(
+    return Material(color: Colors.transparent, child: InkWell(
+      onTap: onTap, borderRadius: BorderRadius.circular(22),
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 12),
       decoration: BoxDecoration(
         color: cardBackground,
@@ -2386,11 +2510,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-    );
+      ),
+    ));
   }
 
   Widget _orderCard(OrderData order) {
     final color = statusColor(order.status);
+    final ageFrom = order.statusDate ?? order.bookingDate;
     final canEdit = isAdmin || order.workerUid == workerUid;
 
     return InkWell(
@@ -2441,6 +2567,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _statusBadge(order.status, color),
               ],
             ),
+            const SizedBox(height: 6),
+            Row(children: [
+              Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade600),
+              const SizedBox(width: 5),
+              Expanded(child: Text('${order.statusDate != null ? 'Status age' : 'Booking age'}: ${_elapsedLabel(ageFrom)}',
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 11, fontWeight: FontWeight.w700))),
+              const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Color(0xFF64716D)),
+            ]),
             const SizedBox(height: 14),
             const Divider(height: 1),
             const SizedBox(height: 12),
@@ -2955,6 +3089,42 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     super.dispose();
   }
 
+  bool _savingPreciseLocation = false;
+
+  Future<void> _savePreciseLocation() async {
+    if (_savingPreciseLocation) return;
+    setState(() => _savingPreciseLocation = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) throw Exception('Phone ki Location/GPS setting on karein.');
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) throw Exception('Location permission allow nahi hui.');
+      if (permission == LocationPermission.deniedForever) throw Exception('Phone Settings mein app ki Location permission allow karein.');
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
+      );
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'deliveryLocation': {
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracyMeters': position.accuracy,
+          'capturedAt': FieldValue.serverTimestamp(),
+          'capturedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+        },
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Precise location order ke saath save ho gayi (accuracy ±${position.accuracy.toStringAsFixed(0)} m).'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location save nahi hui: $e')));
+    } finally {
+      if (mounted) setState(() => _savingPreciseLocation = false);
+    }
+  }
+
   Future<void> _saveReturnInvestigation() async {
     if (_savingReturnInvestigation) return;
     setState(() => _savingReturnInvestigation = true);
@@ -3042,6 +3212,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ),
           if (canEdit) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _savingPreciseLocation ? null : _savePreciseLocation,
+                icon: _savingPreciseLocation
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.my_location_rounded),
+                label: Text(_savingPreciseLocation ? 'Getting precise location...' : 'Save Precise GPS Location'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (data['deliveryLocation'] is Map)
+              Text('Saved GPS: ${(data['deliveryLocation'] as Map)['latitude']}, ${(data['deliveryLocation'] as Map)['longitude']}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
