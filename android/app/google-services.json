@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:100759993214:android:40659b02e28d3f4998912f",
+        "mobilesdk_app_id": "1:100759993214:android:a4098eaf3c9ab20c98912f",
         "android_client_info": {
-          "package_name": "com.example.lcs_order_tracker"
+          "package_name": "pk.aqas.lcstracker"
         }
       },
       "oauth_client": [],
