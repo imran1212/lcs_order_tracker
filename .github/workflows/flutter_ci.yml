@@ -42,10 +42,15 @@ jobs:
       - name: Build release APK for device testing
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
-      - name: Upload test APK
+      - name: Build release Android App Bundle
+        run: flutter build appbundle --release --no-pub
+
+      - name: Upload APK and AAB test artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-arm64-near-final-test-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: lcs-tracker-release-test-artifacts
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 7
