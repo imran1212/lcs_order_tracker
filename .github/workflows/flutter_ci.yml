@@ -30,6 +30,25 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Configure Google Play upload signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Missing signing secrets. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD in GitHub Actions secrets before building a Play Store release."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
       - name: Resolve dependencies
         run: flutter pub get
 
@@ -39,16 +58,21 @@ jobs:
       - name: Run LCS status classification tests
         run: flutter test --no-pub
 
-      - name: Build release APK for device testing
+      - name: Build release APK signed with upload key
         run: flutter build apk --release --target-platform android-arm64 --no-pub
 
-      - name: Build release Android App Bundle
+      - name: Build release Android App Bundle signed with upload key
         run: flutter build appbundle --release --no-pub
+
+      - name: Verify APK and AAB signatures
+        run: |
+          jarsigner -verify -verbose -certs build/app/outputs/bundle/release/app-release.aab
+          apksigner verify --verbose build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK and AAB test artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lcs-tracker-release-test-artifacts
+          name: lcs-tracker-release-artifacts
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/bundle/release/app-release.aab
