@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
@@ -3394,6 +3395,61 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
+  Future<void> callAdminAction(String functionName, Map<String, dynamic> data, String successMessage) async {
+    try {
+      await FirebaseFunctions.instance.httpsCallable(functionName).call(data);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(successMessage)));
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Action failed: ' + (e.message ?? e.code))));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+    }
+  }
+
+  Future<void> editWorkerUsername(String uid, String currentUsername) async {
+    final controller = TextEditingController(text: currentUsername);
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Edit Worker Username'),
+      content: TextField(controller: controller, autofocus: true, autocorrect: false, decoration: const InputDecoration(labelText: 'Username')),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Save'))],
+    ));
+    final username = controller.text.trim().toLowerCase();
+    controller.dispose();
+    if (confirmed != true) return;
+    final valid = username.length >= 3 && username.length <= 30 && username.split('').every((ch) => 'abcdefghijklmnopqrstuvwxyz0123456789._-'.contains(ch));
+    if (!valid) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username 3-30 characters ka ho; letters, numbers, dot, underscore ya hyphen use karein.')));
+      return;
+    }
+    await callAdminAction('adminUpdateWorkerUsername', {'uid': uid, 'username': username}, 'Username updated.');
+  }
+
+  Future<void> resetWorkerPassword(String uid, String username) async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Reset Worker Password'),
+      content: TextField(controller: controller, autofocus: true, obscureText: true, decoration: const InputDecoration(labelText: 'Temporary password (8+ characters)')),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Reset password'))],
+    ));
+    final password = controller.text;
+    controller.dispose();
+    if (confirmed != true) return;
+    if (password.length < 8) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password kam az kam 8 characters ka hona chahiye.')));
+      return;
+    }
+    await callAdminAction('adminResetWorkerPassword', {'uid': uid, 'password': password}, 'Password reset ho gaya for @' + username + '.');
+  }
+
+  Future<void> deleteWorkerAccount(String uid, String name, String username) async {
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Delete Worker Account?'),
+      content: Text('Worker ' + name + ' (@' + username + ') ka login aur profile permanently delete hoga. Existing order history preserve rahegi. Ye action undo nahi ho sakta.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.pop(d, true), child: const Text('Delete account'))],
+    ));
+    if (confirmed != true) return;
+    await callAdminAction('adminDeleteWorker', {'uid': uid}, 'Worker account deleted; order history preserved.');
+  }
   Future<void> toggleWorker(String uid, bool active) async {
     try {
       await users.doc(uid).update({'active': !active});
@@ -3515,9 +3571,22 @@ class _AdminScreenState extends State<AdminScreen> {
                         onPressed: loading ? null : () => editWorkerName(doc.id, name),
                         icon: const Icon(Icons.edit_outlined),
                       ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Worker account actions',
+                        onSelected: (action) {
+                          if (action == 'username') editWorkerUsername(doc.id, username);
+                          if (action == 'password') resetWorkerPassword(doc.id, username);
+                          if (action == 'delete') deleteWorkerAccount(doc.id, name, username);
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'username', child: Text('Edit username')),
+                          PopupMenuItem(value: 'password', child: Text('Reset password')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete worker')),
+                        ],
+                      ),
                       Switch(
                         value: active,
-                        onChanged: (value) => toggleWorker(doc.id, active),
+                        onChanged: loading ? null : (value) => toggleWorker(doc.id, active),
                       ),
                     ],
                   ),
