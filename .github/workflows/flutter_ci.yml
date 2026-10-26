@@ -32,21 +32,21 @@ jobs:
 
       - name: Configure Google Play upload signing
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          AQAS_UPLOAD_KEYSTORE_BASE64: ${{ secrets.AQAS_UPLOAD_KEYSTORE_BASE64 }}
+          AQAS_UPLOAD_STORE_PASSWORD: ${{ secrets.AQAS_UPLOAD_STORE_PASSWORD }}
+          AQAS_UPLOAD_KEY_ALIAS: ${{ secrets.AQAS_UPLOAD_KEY_ALIAS }}
+          AQAS_UPLOAD_KEY_PASSWORD: ${{ secrets.AQAS_UPLOAD_KEY_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "::error::Missing signing secrets. Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD in GitHub Actions secrets before building a Play Store release."
+          if [ -z "$AQAS_UPLOAD_KEYSTORE_BASE64" ] || [ -z "$AQAS_UPLOAD_STORE_PASSWORD" ] || [ -z "$AQAS_UPLOAD_KEY_ALIAS" ] || [ -z "$AQAS_UPLOAD_KEY_PASSWORD" ]; then
+            echo "::error::Missing existing AQAS upload signing secrets. Check repository Settings > Secrets and variables > Actions."
             exit 1
           fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          echo "$AQAS_UPLOAD_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
           cat > android/key.properties <<EOF
           storeFile=upload-keystore.jks
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          keyPassword=$ANDROID_KEY_PASSWORD
+          storePassword=$AQAS_UPLOAD_STORE_PASSWORD
+          keyAlias=$AQAS_UPLOAD_KEY_ALIAS
+          keyPassword=$AQAS_UPLOAD_KEY_PASSWORD
           EOF
 
       - name: Resolve dependencies
