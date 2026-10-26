@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
@@ -3392,6 +3393,1927 @@ class _AdminScreenState extends State<AdminScreen> {
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Name update failed: $e')));
     }
+  }
+
+  Future<void> _callAdminFunction(String name, Map<String, dynamic> data, String success) async {
+    try {
+      await FirebaseFunctions.instance.httpsCallable(name).call(data);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success)));
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Action failed: ${e.message ?? e.code}')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+    }
+  }
+
+  Future<void> editWorkerUsername(String uid, String currentUsername) async {
+    final controller = TextEditingController(text: currentUsername);
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Edit Worker Username'),
+      content: TextField(controller: controller, autofocus: true, autocorrect: false, decoration: const InputDecoration(labelText: 'Username')),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Save'))],
+    ));
+    final username = controller.text.trim().toLowerCase();
+    controller.dispose();
+    if (confirmed != true) return;
+    if (!RegExp(r'^[a-z0-9._-]{3,30}
+    try {
+      await users.doc(uid).update({'active': !active});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(!active ? 'Worker enabled.' : 'Worker disabled.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Status update nahi hua: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stream = users
+        .where('role', isEqualTo: 'worker')
+        .snapshots();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Worker Management',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+        actions: [
+          IconButton(
+            onPressed: loading ? null : addWorker,
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            tooltip: 'Add Worker',
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: loading ? null : addWorker,
+        icon: const Icon(Icons.person_add_alt_1_rounded),
+        label: const Text('Add Worker'),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Workers load nahi ho rahe.\n\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Text(
+                'Abhi koi worker nahi hai.\n+ Add Worker se pehla worker banayein.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data();
+              final name = (data['name'] ?? 'Worker').toString();
+              final username = (data['username'] ?? '').toString();
+              final activeValue = data['active'];
+              final active = activeValue == null ||
+                  activeValue == true ||
+                  activeValue.toString().toLowerCase() == 'true';
+
+              return Card(
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFF087A46).withOpacity(.10),
+                    child: const Icon(
+                      Icons.person_rounded,
+                      color: Color(0xFF1769E0),
+                    ),
+                  ),
+                  title: Text(
+                    name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    '@$username\n${active ? 'Active' : 'Disabled'}',
+                  ),
+                  isThreeLine: true,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Edit worker name',
+                        onPressed: loading ? null : () => editWorkerName(doc.id, name),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Worker account actions',
+                        onSelected: (action) {
+                          if (action == 'username') editWorkerUsername(doc.id, username);
+                          if (action == 'password') resetWorkerPassword(doc.id, username);
+                          if (action == 'delete') deleteWorkerAccount(doc.id, name, username);
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'username', child: ListTile(dense: true, leading: Icon(Icons.badge_outlined), title: Text('Edit username'))),
+                          PopupMenuItem(value: 'password', child: ListTile(dense: true, leading: Icon(Icons.lock_reset_outlined), title: Text('Reset password'))),
+                          PopupMenuItem(value: 'delete', child: ListTile(dense: true, leading: Icon(Icons.delete_outline, color: Colors.red), title: Text('Delete worker'))),
+                        ],
+                      ),
+                      Switch(
+                        value: active,
+                        onChanged: loading ? null : (value) => toggleWorker(doc.id, active),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class OrderDetailScreen extends StatefulWidget {
+  final String orderId;
+  final bool isAdmin;
+  final String currentUid;
+
+  const OrderDetailScreen({
+    super.key,
+    required this.orderId,
+    required this.isAdmin,
+    required this.currentUid,
+  });
+
+  @override
+  State<OrderDetailScreen> createState() => _OrderDetailScreenState();
+}
+
+class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  bool syncing = false;
+  // LCS_RETURN_PREVENTION_V1: notes for delivery/return investigation.
+  final TextEditingController _returnInvestigationController = TextEditingController();
+  bool _savingReturnInvestigation = false;
+  String? _loadedInvestigationOrderId;
+
+  @override
+  void dispose() {
+    _returnInvestigationController.dispose();
+    super.dispose();
+  }
+
+  bool _savingPreciseLocation = false;
+
+  Future<void> _savePreciseLocation() async {
+    if (_savingPreciseLocation) return;
+    setState(() => _savingPreciseLocation = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) throw Exception('Phone ki Location/GPS setting on karein.');
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) throw Exception('Location permission allow nahi hui.');
+      if (permission == LocationPermission.deniedForever) throw Exception('Phone Settings mein app ki Location permission allow karein.');
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
+      );
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'deliveryLocation': {
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracyMeters': position.accuracy,
+          'capturedAt': FieldValue.serverTimestamp(),
+          'capturedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+        },
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Precise location order ke saath save ho gayi (accuracy ±${position.accuracy.toStringAsFixed(0)} m).'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location save nahi hui: $e')));
+    } finally {
+      if (mounted) setState(() => _savingPreciseLocation = false);
+    }
+  }
+
+  Future<void> _saveReturnInvestigation() async {
+    if (_savingReturnInvestigation) return;
+    setState(() => _savingReturnInvestigation = true);
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).update({
+        'returnInvestigationNotes': _returnInvestigationController.text.trim(),
+        'returnInvestigationUpdatedAt': FieldValue.serverTimestamp(),
+        'returnInvestigationUpdatedBy': FirebaseAuth.instance.currentUser?.uid ?? '',
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Investigation notes save ho gaye.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Notes save nahi huay: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingReturnInvestigation = false);
+    }
+  }
+
+  Widget _returnInvestigationSection({
+    required OrderData order,
+    required Map<String, dynamic> data,
+    required bool canEdit,
+  }) {
+    final status = order.status.toLowerCase();
+    final returnCase = status.contains('return') ||
+        status.contains('undeliver') ||
+        status.contains('attempt') ||
+        status.contains('failed');
+    if (_loadedInvestigationOrderId != order.id) {
+      _loadedInvestigationOrderId = order.id;
+      _returnInvestigationController.text =
+          (data['returnInvestigationNotes'] ?? '').toString();
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFCBD5E1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                returnCase ? Icons.assignment_late_outlined : Icons.shield_outlined,
+                color: returnCase ? const Color(0xFFB42318) : const Color(0xFF087A46),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Return Prevention & Investigation',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            returnCase
+                ? 'Delivery/return risk detected. Customer contact, address issue, attempt details aur courier complaint ka record yahan rakhein.'
+                : 'Delivery issue ya return risk nazar aaye to follow-up details yahan record karein.',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _returnInvestigationController,
+            readOnly: !canEdit,
+            minLines: 3,
+            maxLines: 6,
+            decoration: InputDecoration(
+              labelText: 'Investigation notes',
+              hintText: 'Misal: customer se baat hui, address confirm, courier complaint/reference...',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          if (canEdit) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _savingPreciseLocation ? null : _savePreciseLocation,
+                icon: _savingPreciseLocation
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.my_location_rounded),
+                label: Text(_savingPreciseLocation ? 'Getting precise location...' : 'Save Precise GPS Location'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (data['deliveryLocation'] is Map)
+              Text('Saved GPS: ${(data['deliveryLocation'] as Map)['latitude']}, ${(data['deliveryLocation'] as Map)['longitude']}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _savingReturnInvestigation ? null : _saveReturnInvestigation,
+                icon: _savingReturnInvestigation
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save_outlined),
+                label: Text(_savingReturnInvestigation ? 'Saving...' : 'Save Investigation Notes'),
+              ),
+            ),
+          ],
+          if (data['returnInvestigationUpdatedAt'] != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Last saved by: ${(data['returnInvestigationUpdatedBy'] ?? 'Unknown').toString()}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _syncOrder(BuildContext context, OrderData order) async {
+    if (syncing) return;
+    setState(() => syncing = true);
+    try {
+      final result = await LcsApiService.syncCn(order.cn);
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
+      final previousStatus = order.status.trim();
+      await orderRef.update({
+        'status': result.status,
+        'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+        'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+        'lastApiSyncAt': FieldValue.serverTimestamp(),
+        'lcsRawStatus': result.status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (previousStatus != result.status.trim()) {
+        // LCS_HISTORY_IDEMPOTENCY_V1: same status/date/source reuses the same document.
+        final historyStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+        final historyTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+        await orderRef.collection('lcsStatusHistory')
+            .doc('manual_${historyStatusKey}_$historyTimeKey')
+            .set({
+          'cn': order.cn,
+          'previousStatus': previousStatus,
+          'status': result.status.trim(),
+          'source': 'manual_sync',
+          'activityDate': result.statusDate == null
+              ? Timestamp.now()
+              : Timestamp.fromDate(result.statusDate!),
+          'recordedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('LCS status updated: ${result.status}')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('LCS sync nahi hua: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => syncing = false);
+    }
+  }
+
+  Future<void> _deleteOrder(BuildContext context, OrderData order) async {
+    if (!widget.isAdmin) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Order?'),
+        content: Text('CN ${order.cn} ko permanently delete karna hai?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.orderId).delete();
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Order delete nahi hua: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Order Details', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('orders').doc(widget.orderId).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text('Order load nahi hua.\n${snapshot.error}', textAlign: TextAlign.center));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final doc = snapshot.data!;
+          if (!doc.exists) return const Center(child: Text('Order delete ho chuka hai.'));
+
+          final order = OrderData.fromFirestore(doc);
+          final canEdit = widget.isAdmin || order.workerUid == widget.currentUid;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              _detailHeader(order),
+              const SizedBox(height: 14),
+              _detailSection('Order Information', [
+                _detailRow('Customer', order.customer),
+                _detailRow('CN Number', order.cn),
+                _detailRow('Product', order.product),
+                _detailRow('COD Amount', 'Rs. ${order.amount.toStringAsFixed(0)}'),
+                _detailRow('Destination', order.destination),
+                _detailRow('Worker', order.workerName),
+              ]),
+              const SizedBox(height: 14),
+              _detailSection('Dates & Tracking', [
+                _detailRow('Booking Date', _formatDateTime(order.bookingDate)),
+                _detailRow('Current Status', order.status),
+                _detailRow('Status Date', _formatDateTime(order.statusDate)),
+                _detailRow('Delivery Date', _formatDateTime(order.deliveryDate)),
+                _detailRow('Last API Sync', _formatDateTime(order.lastApiSyncAt)),
+              ]),
+              const SizedBox(height: 14),
+              _statusHistorySection(widget.orderId),
+              const SizedBox(height: 14),
+              _returnInvestigationSection(order: order, data: doc.data() ?? <String, dynamic>{}, canEdit: canEdit),
+              const SizedBox(height: 14),
+              _receiptSection(context, order.receiptUrls),
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: syncing ? null : () => _syncOrder(context, order),
+                icon: syncing
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.sync_rounded),
+                label: Text(syncing ? 'Syncing LCS...' : 'Sync LCS Status'),
+              ),
+              const SizedBox(height: 10),
+              if (canEdit)
+                FilledButton.icon(
+                  onPressed: () async {
+                    await showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => EditOrderSheet(order: order),
+                    );
+                  },
+                  icon: const Icon(Icons.edit_rounded),
+                  label: const Text('Edit Order'),
+                ),
+              if (widget.isAdmin) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => _deleteOrder(context, order),
+                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                  label: const Text('Delete Order', style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // LCS_STATUS_HISTORY_V1: live timeline for recorded status transitions.
+  Widget _statusHistorySection(String orderId) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('orders')
+          .doc(orderId)
+          .collection('lcsStatusHistory')
+          .orderBy('recordedAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _detailSection('Status History', [
+            _detailRow('History', 'Load nahi ho saki.'),
+          ]);
+        }
+        if (!snapshot.hasData) {
+          return _detailSection('Status History', [
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: LinearProgressIndicator(),
+            ),
+          ]);
+        }
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return _detailSection('Status History', [
+            _detailRow('History', 'Abhi koi status history nahi hai.'),
+          ]);
+        }
+        return _detailSection('Status History', docs.map((doc) {
+          final data = doc.data();
+          final status = (data['status'] ?? 'Unknown').toString();
+          final previous = (data['previousStatus'] ?? '').toString();
+          final source = (data['source'] ?? 'tracking').toString();
+          final timeValue = data['activityDate'] ?? data['recordedAt'];
+          DateTime? eventDate;
+          if (timeValue is Timestamp) eventDate = timeValue.toDate();
+          if (timeValue is DateTime) eventDate = timeValue;
+          final dateText = eventDate == null ? 'Time unavailable' : _formatDateTime(eventDate);
+          final title = previous.isEmpty ? status : '$previous → $status';
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 3, right: 10),
+                  child: Icon(Icons.history_rounded, color: Color(0xFF1769E0), size: 20),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 3),
+                      Text('$dateText • $source', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList());
+      },
+    );
+  }
+
+  Widget _detailHeader(OrderData order) {
+    final category = classifyLcsDashboardStatus(order.status);
+    final List<Color> headerColors = category == LcsDashboardStatusCategory.returned
+        ? const [Color(0xFFE11D2E), Color(0xFFFF4D4D)]
+        : category == LcsDashboardStatusCategory.readyToReturn
+            ? const [Color(0xFFF04A19), Color(0xFFFF812B)]
+            : category == LcsDashboardStatusCategory.delivered
+                ? const [Color(0xFF078447), Color(0xFF22B573)]
+                : category == LcsDashboardStatusCategory.deliveryIssue
+                    ? const [Color(0xFFB42318), Color(0xFFEF4444)]
+                    : [aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()],
+                       Color.lerp(aqasPaletteColors[appPaletteIndex.value.clamp(0, aqasPaletteColors.length - 1).toInt()], Colors.white, .2)!];
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: headerColors),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(order.customer, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 4),
+                Text('CN: ${order.cn}', style: TextStyle(color: Colors.white.withOpacity(.85))),
+                const SizedBox(height: 8),
+                _statusBadge(order.status, Colors.white),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailSection(String title, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        ...children,
+      ]),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        SizedBox(width: 120, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w600))),
+        Expanded(child: Text(value.isEmpty ? '-' : value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
+      ]),
+    );
+  }
+
+  Widget _receiptSection(BuildContext context, List<String> urls) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.receipt_long_rounded, color: Color(0xFF1769E0)),
+          const SizedBox(width: 8),
+          Text('Receipt Images (${urls.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        ]),
+        const SizedBox(height: 12),
+        if (urls.isEmpty)
+          Text('Receipt image abhi permanently save nahi hoti. Spark development mode mein image sirf OCR/review ke liye use hoti hai.', style: TextStyle(color: Colors.grey.shade600))
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 10, mainAxisSpacing: 10),
+            itemCount: urls.length,
+            itemBuilder: (_, index) => GestureDetector(
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => Dialog(
+                  child: InteractiveViewer(child: Image.network(urls[index], fit: BoxFit.contain)),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(urls[index], fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: const Icon(Icons.broken_image_outlined))),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+class EditOrderSheet extends StatefulWidget {
+  final OrderData order;
+  const EditOrderSheet({super.key, required this.order});
+  @override
+  State<EditOrderSheet> createState() => _EditOrderSheetState();
+}
+
+class _EditOrderSheetState extends State<EditOrderSheet> {
+  late final TextEditingController customerController;
+  late final TextEditingController customerPhoneController;
+  late final TextEditingController cnController;
+  late final TextEditingController productController;
+  late final TextEditingController amountController;
+  late final TextEditingController destinationController;
+  late final TextEditingController bookingDateController;
+  late DateTime? bookingDate;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final o = widget.order;
+    customerController = TextEditingController(text: o.customer);
+    customerPhoneController = TextEditingController(text: o.customerPhone);
+    cnController = TextEditingController(text: o.cn);
+    productController = TextEditingController(text: o.product);
+    amountController = TextEditingController(text: o.amount.toStringAsFixed(0));
+    destinationController = TextEditingController(text: o.destination);
+    bookingDate = o.bookingDate;
+    bookingDateController = TextEditingController(text: o.bookingDate == null ? '' : _formatDateTime(o.bookingDate));
+  }
+
+  @override
+  void dispose() {
+    customerController.dispose();
+    customerPhoneController.dispose();
+    cnController.dispose();
+    productController.dispose();
+    amountController.dispose();
+    destinationController.dispose();
+    bookingDateController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime(2100), initialDate: bookingDate ?? DateTime.now());
+    if (picked == null || !mounted) return;
+    setState(() {
+      bookingDate = picked;
+      bookingDateController.text = _formatDateTime(picked);
+    });
+  }
+
+  Future<void> _save() async {
+    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Customer name aur CN required hain.')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await FirebaseFirestore.instance.collection('orders').doc(widget.order.id).update({
+        'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
+        'cn': cnController.text.trim(),
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': double.tryParse(amountController.text.trim()) ?? 0,
+        'destination': destinationController.text.trim(),
+        'bookingDate': Timestamp.fromDate(bookingDate ?? DateTime.now()),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order updated successfully.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Order update nahi hua: $e')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      child: SingleChildScrollView(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 45, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)))),
+          const SizedBox(height: 18),
+          const Text('Edit Order', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 16),
+          _field(controller: customerController, label: 'Customer Name', icon: Icons.person_outline_rounded),
+          _field(controller: customerPhoneController, label: 'Customer Contact Number', icon: Icons.phone_outlined, keyboardType: TextInputType.phone),
+          _field(controller: cnController, label: 'LCS CN Number', icon: Icons.qr_code_2_rounded),
+          _field(controller: productController, label: 'Product', icon: Icons.shopping_bag_outlined),
+          _field(controller: amountController, label: 'COD Amount', icon: Icons.payments_outlined, keyboardType: TextInputType.number),
+          _field(controller: destinationController, label: 'Destination', icon: Icons.location_on_outlined),
+          _field(controller: bookingDateController, label: 'Booking Date', icon: Icons.calendar_today_outlined, readOnly: true, onTap: _pickDate),
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(color: const Color(0xFF087A46).withOpacity(.06), borderRadius: BorderRadius.circular(14)),
+            child: Text('LCS Status manually edit nahi hoga. API status ko control karegi.', style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(width: double.infinity, height: 52, child: FilledButton.icon(onPressed: saving ? null : _save, icon: const Icon(Icons.save_rounded), label: Text(saving ? 'Saving...' : 'Save Changes'))),
+        ]),
+      ),
+    );
+  }
+}
+
+Color statusColor(String status) {
+  switch (status) {
+    case 'Delivered':
+      return const Color(0xFF16A36A);
+    case 'Out for Delivery':
+      return const Color(0xFFFF9800);
+    case 'Returned':
+      return const Color(0xFFE5484D);
+    default:
+      return const Color(0xFF087A46);
+  }
+}
+
+class OrderData {
+  final String id;
+  final String customer;
+  final String customerPhone;
+  final String cn;
+  final String product;
+  final double amount;
+  final String status;
+  final String destination;
+  final String workerName;
+  final String workerUid;
+  final DateTime? bookingDate;
+  final DateTime? statusDate;
+  final DateTime? deliveryDate;
+  final List<String> receiptUrls;
+  final DateTime? lastApiSyncAt;
+
+  const OrderData({
+    required this.id,
+    required this.customer,
+    this.customerPhone = '',
+    required this.cn,
+    required this.product,
+    required this.amount,
+    required this.status,
+    required this.destination,
+    required this.workerName,
+    this.workerUid = '',
+    this.bookingDate,
+    this.statusDate,
+    this.deliveryDate,
+    this.receiptUrls = const [],
+    this.lastApiSyncAt,
+  });
+
+  static DateTime? _date(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return null;
+  }
+
+  factory OrderData.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    final rawUrls = data['receiptUrls'];
+    final urls = rawUrls is List
+        ? rawUrls.map((e) => e.toString()).where((e) => e.isNotEmpty).toList()
+        : <String>[];
+
+    return OrderData(
+      id: doc.id,
+      customer: (data['customer'] ?? '').toString(),
+      customerPhone: (data['customerPhone'] ?? '').toString(),
+      cn: (data['cn'] ?? '').toString(),
+      product: (data['product'] ?? 'Not specified')
+          .toString()
+          .replaceAll('{', '')
+          .replaceAll('}', '')
+          .replaceAll('[', '')
+          .replaceAll(']', '')
+          .replaceAll('(', '')
+          .replaceAll(')', '')
+          .trim(),
+      amount: (data['amount'] as num?)?.toDouble() ?? 0,
+      status: (data['status'] ?? 'Pending API Sync').toString(),
+      destination: (data['destination'] ?? '').toString(),
+      workerName: (data['workerName'] ?? '').toString(),
+      workerUid: (data['workerUid'] ?? '').toString(),
+      bookingDate: _date(data['bookingDate']),
+      statusDate: _date(data['statusDate']),
+      deliveryDate: _date(data['deliveryDate']),
+      receiptUrls: urls,
+      lastApiSyncAt: _date(data['lastApiSyncAt']),
+    );
+  }
+}
+
+Widget _field({
+  required TextEditingController controller,
+  required String label,
+  required IconData icon,
+  TextInputType? keyboardType,
+  bool readOnly = false,
+  VoidCallback? onTap,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 13),
+    child: TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      readOnly: readOnly,
+      onTap: onTap,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    ),
+  );
+}
+
+class AddOrderSheet extends StatefulWidget {
+  final String workerUid;
+
+  const AddOrderSheet({
+    super.key,
+    required this.workerUid,
+  });
+
+  @override
+  State<AddOrderSheet> createState() => _AddOrderSheetState();
+}
+
+class _AddOrderSheetState extends State<AddOrderSheet> {
+  final customerController = TextEditingController();
+  final customerPhoneController = TextEditingController();
+  final cnController = TextEditingController();
+  final productController = TextEditingController();
+  final amountController = TextEditingController();
+  final destinationController = TextEditingController();
+  final workerController = TextEditingController();
+  final bookingDateController = TextEditingController();
+
+  DateTime? bookingDate;
+
+  final ImagePicker _picker = ImagePicker();
+  final TextRecognizer _textRecognizer =
+      TextRecognizer(script: TextRecognitionScript.latin);
+  final BarcodeScanner _barcodeScanner = BarcodeScanner();
+
+  final List<XFile> _receiptImages = [];
+  final List<Map<String, dynamic>> _bulkReceiptDrafts = [];
+  bool _ocrLoading = false;
+  String _ocrMessage = '';
+
+  // DIAG_SAVE_V1
+  bool _saving = false;
+
+  /// Runs one Firestore operation. If it fails, the label, plugin, code and
+  /// message are all kept in the thrown error (nothing is hidden).
+  Future<T> _diagStep<T>(String label, Future<T> Function() action) async {
+    try {
+      return await action();
+    } on FirebaseException catch (e) {
+      throw Exception('[$label] ${e.plugin}/${e.code}: ${e.message}');
+    } catch (e) {
+      throw Exception('[$label] ${e.runtimeType}: $e');
+    }
+  }
+
+  /// Read-only snapshot of exactly what the security rules will see.
+  Future<String> _diagPreflight() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('[P0 auth] Pehle app mein login karein.');
+    final snap = await _diagStep(
+      'P1 read users/${user.uid}',
+      () => FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
+    );
+    final d = snap.data() ?? <String, dynamic>{};
+    final active = d['active'];
+    final role = d['role'];
+    return 'project=${Firebase.app().options.projectId}\n'
+        'authUid=${user.uid}\n'
+        'widget.workerUid=${widget.workerUid}\n'
+        'uidMatch=${user.uid == widget.workerUid}\n'
+        'profileExists=${snap.exists}\n'
+        'active=$active (${active.runtimeType}) rulesOk=${active == true}\n'
+        'role="$role" (${role.runtimeType}) roleOk=${role == 'worker' || role == 'admin'}';
+  }
+
+  /// Selectable dialog so the full error can be read / screenshotted.
+  Future<void> _diagShow(String title, String body) async {
+    debugPrint('DIAG $title: $body');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: SelectableText(body)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+// ----------------------------------------------------------------------
+
+  Future<void> _pickReceiptImages() async {
+    try {
+      final images = await _picker.pickMultiImage(imageQuality: 75, maxWidth: 1600, maxHeight: 2200);
+      if (images.isEmpty) return;
+
+      final selected = images.take(20).toList();
+      setState(() {
+        _receiptImages
+          ..clear()
+          ..addAll(selected);
+        _bulkReceiptDrafts.clear();
+        _ocrMessage = '${selected.length} receipt image selected; reading each receipt separately...';
+      });
+
+      await _runOcr();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _ocrMessage = 'Receipt select nahi hui.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Receipt select error: $e')),
+      );
+    }
+  }
+
+  Future<void> _takeReceiptPhoto() async {
+    try {
+      final image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 75,
+        maxWidth: 1600,
+        maxHeight: 2200,
+      );
+      if (image == null) return;
+
+      setState(() {
+        _receiptImages
+          ..clear()
+          ..add(image);
+        _bulkReceiptDrafts.clear();
+        _ocrMessage = 'Receipt photo selected.';
+      });
+
+      await _runOcr();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Camera error: $e')),
+      );
+    }
+  }
+
+  Future<void> _runOcr() async {
+    if (_receiptImages.isEmpty) return;
+    setState(() {
+      _ocrLoading = true;
+      _ocrMessage = 'Har receipt alag read ho rahi hai...';
+      _bulkReceiptDrafts.clear();
+    });
+    final original = <String, dynamic>{
+      'customer': customerController.text, 'phone': customerPhoneController.text,
+      'cn': cnController.text, 'product': productController.text,
+      'amount': amountController.text, 'destination': destinationController.text,
+      'date': bookingDate, 'dateText': bookingDateController.text,
+    };
+    try {
+      for (final image in _receiptImages) {
+        customerController.clear(); customerPhoneController.clear(); cnController.clear();
+        productController.clear(); amountController.clear(); destinationController.clear();
+        bookingDate = null; bookingDateController.clear();
+        final inputImage = InputImage.fromFilePath(image.path);
+        String recognizedText = '';
+        final barcodeValues = <String>[];
+        try { recognizedText = (await _textRecognizer.processImage(inputImage)).text; } catch (_) {}
+        try {
+          final barcodes = await _barcodeScanner.processImage(inputImage);
+          for (final barcode in barcodes) {
+            final value = barcode.rawValue?.trim();
+            if (value != null && value.isNotEmpty) barcodeValues.add(value);
+          }
+        } catch (_) {}
+        _fillFieldsFromReceipt(recognizedText, barcodeValues);
+        _bulkReceiptDrafts.add({
+          'customer': customerController.text.trim(),
+          'customerPhone': customerPhoneController.text.trim(),
+          'cn': cnController.text.trim(),
+          'product': productController.text.trim(),
+          'amount': amountController.text.trim(),
+          'destination': destinationController.text.trim(),
+          'bookingDate': bookingDate,
+          'imagePath': image.name,
+        });
+      }
+      if (_bulkReceiptDrafts.isNotEmpty) {
+        final first = _bulkReceiptDrafts.first;
+        customerController.text = (first['customer'] ?? '').toString();
+        customerPhoneController.text = (first['customerPhone'] ?? '').toString();
+        cnController.text = (first['cn'] ?? '').toString();
+        productController.text = (first['product'] ?? '').toString();
+        amountController.text = (first['amount'] ?? '').toString();
+        destinationController.text = (first['destination'] ?? '').toString();
+        bookingDate = first['bookingDate'] as DateTime?;
+        bookingDateController.text = bookingDate == null ? '' : _formatDateOnly(bookingDate!);
+      }
+      if (!mounted) return;
+      setState(() {
+        final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).length;
+        _ocrMessage = '${_bulkReceiptDrafts.length} receipt(s) separately scanned; $valid CN detected. Review before saving.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _ocrMessage = 'OCR complete nahi ho saka: $e');
+    } finally {
+      if (mounted) setState(() => _ocrLoading = false);
+      if (_bulkReceiptDrafts.isEmpty) {
+        customerController.text = original['customer'] as String;
+        customerPhoneController.text = original['phone'] as String;
+        cnController.text = original['cn'] as String;
+        productController.text = original['product'] as String;
+        amountController.text = original['amount'] as String;
+        destinationController.text = original['destination'] as String;
+        bookingDate = original['date'] as DateTime?;
+        bookingDateController.text = original['dateText'] as String;
+      }
+    }
+  }
+
+  String _firstMatch(String pattern, String text) {
+    final match = RegExp(
+      pattern,
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(text);
+    return match?.group(1)?.trim() ?? '';
+  }
+
+  void _fillFieldsFromReceipt(
+    String rawText,
+    List<String> barcodeValues,
+  ) {
+    final text = rawText.replaceAll('\r', '');
+    final upper = text.toUpperCase();
+
+    String cn = '';
+    final cnCandidates = <String>[
+      ...RegExp(r'\b[A-Z]{2}\d{8,14}\b').allMatches(upper).map((m) => m.group(0)!),
+      ...barcodeValues.where((v) => RegExp(r'^[A-Za-z]{1,4}\d{7,14}$').hasMatch(v)),
+    ];
+    if (cnCandidates.isNotEmpty) {
+      cn = cnCandidates.first;
+    }
+
+    if (cn.isNotEmpty) {
+      cnController.text = cn;
+    }
+
+    var cod = _firstMatch(
+      r'(?:COD|COLLECT\s*AMOUNT|COD\s*AMOUNT)[^\d]{0,80}(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
+      text,
+    );
+
+    if (cod.isEmpty) {
+      for (final line in text.split('\n')) {
+        if (RegExp(r'\bCOD\b', caseSensitive: false).hasMatch(line)) {
+          final match = RegExp(
+            r'(?:PKR|RS\.?|₨)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)',
+            caseSensitive: false,
+          ).firstMatch(line);
+          if (match != null) {
+            cod = match.group(1)?.trim() ?? '';
+            break;
+          }
+        }
+      }
+    }
+
+    if (cod.isNotEmpty) {
+      amountController.text = cod.replaceAll(',', '');
+    }
+
+    final phone = _firstMatch(
+      r'(?:CONTACT|PHONE|MOBILE|CELL)[^0-9+]{0,12}([+0-9() -]{7,20})',
+      text,
+    );
+    if (phone.isNotEmpty) customerPhoneController.text = _cleanOcrValue(phone);
+
+    final customer = _firstMatch(
+      r'(?:CONSIGNEE(?:\s*NAME)?|RECEIVER(?:\s*NAME)?|CUSTOMER(?:\s*NAME)?)\s*[:\-]?\s*([^\n]+)',
+      text,
+    );
+    if (customer.isNotEmpty) {
+      customerController.text = _cleanOcrValue(customer);
+    }
+
+    final receiptLines = text.split('\n').map((line) => line.trim()).toList();
+    String labelledValue(List<String> labels) {
+      for (var i = 0; i < receiptLines.length; i++) {
+        for (final label in labels) {
+          final match = RegExp('^' + label + r'\s*[:\-]?\s*(.*)$', caseSensitive: false)
+              .firstMatch(receiptLines[i]);
+          if (match == null) continue;
+          var value = _cleanOcrValue(match.group(1) ?? '');
+          if (value.isEmpty && i + 1 < receiptLines.length) {
+            final next = receiptLines[i + 1];
+            if (!RegExp(r'^(?:COD|AMOUNT|BOOKING?\s*DATE|DATE|CN|CONSIGNMENT|CUSTOMER|CONSIGNEE|PHONE|CONTACT|PRODUCT|ITEM|DESTINATION)\b', caseSensitive: false).hasMatch(next)) {
+              value = _cleanOcrValue(next);
+            }
+          }
+          return value;
+        }
+      }
+      return '';
+    }
+
+    var destination = labelledValue([r'DESTINATION(?:\s+CITY)?', r'DESTINATION\s+CITY\s+NAME']);
+    if (destination.isNotEmpty &&
+        (RegExp(r'\b(?:PKR|RS\.?|COD)\b', caseSensitive: false).hasMatch(destination) ||
+         RegExp(r'^[\d, .]+$').hasMatch(destination))) {
+      destination = '';
+    }
+    if (destination.isNotEmpty) destinationController.text = destination;
+
+    var bookDate = labelledValue([r'BOOKING?\s*DATE', r'BOOK\s*DATE']);
+    if (bookDate.isEmpty) {
+      bookDate = _firstMatch(
+        r'(?:BOOK\s*DATE|BOOKING\s*DATE)\s*[:\-]?\s*([0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{4}|[0-9]{4}[\/-][0-9]{1,2}[\/-][0-9]{1,2})',
+        text,
+      );
+    }
+    final parsedBookDate = _parseReceiptDate(bookDate);
+    if (parsedBookDate != null) {
+      bookingDate = parsedBookDate;
+      bookingDateController.text = _formatDateOnly(parsedBookDate);
+    }
+
+    final product = _firstMatch(
+      r'(?:PRODUCT|ITEM|DESCRIPTION)\s*[:\-]?\s*([^\n]+)',
+      text,
+    );
+    if (product.isNotEmpty) {
+      productController.text = _cleanProductValue(product);
+    }
+
+    // Kuch LCS receipts mein product dedicated label ke bajaye
+    // Special Instruction ke start mein hota hai.
+    if (productController.text.trim().isEmpty) {
+      final specialIndex = upper.indexOf('SPECIAL INSTRUCTION');
+      if (specialIndex >= 0) {
+        final tail = text.substring(specialIndex);
+        final lines = tail
+            .split('\n')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (lines.length > 1) {
+          var candidate = _cleanOcrValue(
+            lines[1].replaceFirst(RegExp(r'^[:\-]+'), '').trim(),
+          );
+          candidate = candidate.split(RegExp(
+            r'\s*(?:\)|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH)',
+            caseSensitive: false,
+          )).first;
+          candidate = _cleanProductValue(candidate);
+          if (candidate.isNotEmpty) {
+            productController.text = candidate;
+          }
+        }
+      }
+    }
+  }
+
+  String _cleanProductValue(String value) {
+    return _cleanOcrValue(value)
+        .replaceAll(RegExp(r'[{}\)\(]+'), ' ')
+        .replaceAll(RegExp(
+          r'\s*(?:KINDLY|CAREFULLY|SO\s+PARCEL|PARCEL\s+WITH|OPEN|ALLOW|HANDLE|WITH\s+CARE|HANDLE\s+WITH).*',
+          caseSensitive: false,
+        ), '')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+  }
+
+  DateTime? _parseReceiptDate(String value) {
+    if (value.trim().isEmpty) return null;
+    final v = value.trim().replaceAll('/', '-');
+    final parts = v.split('-');
+    try {
+      if (parts.length != 3) return null;
+      if (parts[0].length == 4) {
+        return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      }
+      return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _formatDateOnly(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+
+  String _cleanOcrValue(String value) {
+    return value
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'^[\s:\-]+|[\s]+$'), '')
+        .trim();
+  }
+
+@override
+void initState() {
+  super.initState();
+  _loadWorkerName();
+}
+
+Future<void> _loadWorkerName() async {
+  try {
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.workerUid)
+        .get();
+
+    if (!mounted || !doc.exists) return;
+
+    final data = doc.data() ?? {};
+
+    final name = (data['name'] ?? data['username'] ?? '').toString();
+
+    if (name.isNotEmpty) {
+      workerController.text = name;
+    }
+  } catch (_) {
+    // Worker name load fail ho to order save phir bhi continue rahe.
+  }
+}
+
+  @override
+  void dispose() {
+    customerController.dispose();
+    customerPhoneController.dispose();
+    cnController.dispose();
+    productController.dispose();
+    amountController.dispose();
+    destinationController.dispose();
+    workerController.dispose();
+    bookingDateController.dispose();
+    _textRecognizer.close();
+    _barcodeScanner.close();
+    super.dispose();
+  }
+
+  Future<void> _pickBookingDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      initialDate: bookingDate ?? DateTime.now(),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      bookingDate = picked;
+      bookingDateController.text = _formatDateOnly(picked);
+    });
+  }
+
+  Future<void> _saveBulkReceiptOrders() async {
+    final valid = _bulkReceiptDrafts.where((d) => (d['cn'] ?? '').toString().trim().isNotEmpty).toList();
+    if (valid.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kisi receipt se CN number detect nahi hua. Fields manually correct karein.')),
+      );
+      return;
+    }
+    // Captured BEFORE any await so they stay valid after the sheet is popped.
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    String preflight = '(preflight run nahi hua)';
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception('Pehle app mein login karein.');
+      final normalizedCns = <String>{};
+      for (final draft in valid) {
+        final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
+        if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+          throw Exception('Invalid CN: $cn');
+        }
+        if (!normalizedCns.add(cn)) throw Exception('Bulk receipts mein duplicate CN hai: $cn');
+      }
+
+      preflight = await _diagPreflight();
+
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      final alreadyReserved = <String>[];
+      for (final cn in normalizedCns) {
+        final regSnap = await _diagStep(
+          'R1 read cnRegistry/$cn',
+          () => FirebaseFirestore.instance.collection('cnRegistry').doc(cn).get(),
+        );
+        if (regSnap.exists) {
+          alreadyReserved.add('$cn (orderId: ${regSnap.data()?['orderId']})');
+        }
+      }
+      if (alreadyReserved.isNotEmpty) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'Ye CN registry mein pehle se maujood hain:\n${alreadyReserved.join('\n')}\n\nKoi order save nahi kiya.',
+        );
+        return;
+      }
+
+      final batch = FirebaseFirestore.instance.batch();
+      final ordersCollection = FirebaseFirestore.instance.collection('orders');
+      final registryCollection = FirebaseFirestore.instance.collection('cnRegistry');
+      for (final draft in valid) {
+        final ref = ordersCollection.doc();
+        final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
+        final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
+        batch.set(ref, {
+          'customer': (draft['customer'] ?? '').toString().trim(),
+          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
+          'cn': cn,
+          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
+          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
+          'status': 'Pending API Sync',
+          'destination': (draft['destination'] ?? '').toString().trim(),
+          'workerName': workerController.text.trim(),
+          'workerUid': widget.workerUid,
+          'bookingDate': Timestamp.fromDate(date),
+          'statusDate': null,
+          'deliveryDate': null,
+          'receiptUrls': <String>[],
+          'receiptCount': 1,
+          'receiptUploadStatus': 'temporary_only',
+          'receiptImageName': (draft['imagePath'] ?? '').toString(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(registryCollection.doc(cn), {
+          'cn': cn,
+          'orderId': ref.id,
+          'workerUid': widget.workerUid,
+          'createdBy': currentUser.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
+          'cn': cn,
+          'previousStatus': '',
+          'status': 'Pending API Sync',
+          'source': 'bulk_receipt_import',
+          'activityDate': Timestamp.fromDate(date),
+          'recordedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await _diagStep(
+        'B1 batch.commit BULK (${valid.length} orders, ${valid.length * 3} writes)',
+        () => batch.commit(),
+      );
+      if (!mounted) return;
+      final skipped = _bulkReceiptDrafts.length - valid.length;
+      navigator.pop();
+      messenger.showSnackBar(
+        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await _diagShow('Bulk orders save nahi huay', '$e\n\n--- preflight ---\n$preflight');
+    }
+  }
+
+
+// ----------------------------------------------------------------------
+
+  Future<void> _saveSingleOrder() async {
+    if (customerController.text.trim().isEmpty || cnController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer name and CN number are required.')),
+      );
+      return;
+    }
+
+    final amount = double.tryParse(amountController.text.trim()) ?? 0;
+    final finalBookingDate = bookingDate ?? DateTime.now();
+
+    // Captured BEFORE any await so they stay valid after the sheet is popped.
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    String preflight = '(preflight run nahi hua)';
+    bool committed = false;
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) throw Exception('Pehle app mein login karein.');
+      final cn = cnController.text.trim().toUpperCase();
+      if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
+        throw Exception('CN mein sirf A-Z, 0-9, dot, underscore ya hyphen allowed hain.');
+      }
+
+      preflight = await _diagPreflight();
+
+      final orderRef = FirebaseFirestore.instance.collection('orders').doc();
+      final registryRef = FirebaseFirestore.instance.collection('cnRegistry').doc(cn);
+
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      final regSnap = await _diagStep('R1 read cnRegistry/$cn', () => registryRef.get());
+      if (regSnap.exists) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'CN $cn registry mein pehle se maujood hai (orderId: ${regSnap.data()?['orderId']}). Naya order save nahi kiya.',
+        );
+        return;
+      }
+
+      final batch = FirebaseFirestore.instance.batch();
+
+      batch.set(orderRef, {
+        'customer': customerController.text.trim(),
+        'customerPhone': customerPhoneController.text.trim(),
+        'cn': cn,
+        'product': productController.text.trim().isEmpty ? 'Not specified' : productController.text.trim(),
+        'amount': amount,
+        'status': 'Pending API Sync',
+        'destination': destinationController.text.trim(),
+        'workerName': workerController.text.trim(),
+        'workerUid': widget.workerUid,
+        'bookingDate': Timestamp.fromDate(finalBookingDate),
+        'statusDate': null,
+        'deliveryDate': null,
+        'receiptUrls': <String>[],
+        'receiptCount': _receiptImages.length,
+        'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      batch.set(registryRef, {
+        'cn': cn,
+        'orderId': orderRef.id,
+        'workerUid': widget.workerUid,
+        'createdBy': currentUser.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      batch.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
+        'cn': cn,
+        'previousStatus': '',
+        'status': 'Pending API Sync',
+        'source': 'order_created',
+        'activityDate': Timestamp.fromDate(finalBookingDate),
+        'recordedAt': FieldValue.serverTimestamp(),
+      });
+
+      // B1: the atomic batch (orders + cnRegistry + lcsStatusHistory).
+      await _diagStep(
+        'B1 batch.commit SINGLE (orders/${orderRef.id} + cnRegistry/$cn + history/order_created_pending)',
+        () => batch.commit(),
+      );
+      committed = true;
+
+      // U1: receipt metadata update AFTER the batch (order already exists here).
+      await _diagStep(
+        'U1 orderRef.update receipt metadata',
+        () => orderRef.update({
+          'receiptUrls': <String>[],
+          'receiptCount': _receiptImages.length,
+          'receiptUploadStatus': _receiptImages.isEmpty ? 'none' : 'temporary_only',
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
+      );
+
+      // Automatically fetch LCS status immediately after saving a new order.
+      // Keep the order saved even if the courier API is temporarily unavailable.
+      String? syncWarning;
+      try {
+        final result = await _diagStep(
+          'S1 LcsApiService.syncCn',
+          () => LcsApiService.syncCn(cnController.text.trim()),
+        );
+        await _diagStep(
+          'S2 orderRef.update LCS status',
+          () => orderRef.update({
+            'status': result.status,
+            'statusDate': result.statusDate == null ? null : Timestamp.fromDate(result.statusDate!),
+            'deliveryDate': result.deliveryDate == null ? null : Timestamp.fromDate(result.deliveryDate!),
+            'lastApiSyncAt': FieldValue.serverTimestamp(),
+            'lcsRawStatus': result.status,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }),
+        );
+        if (result.status.trim() != 'Pending API Sync') {
+          final autoStatusKey = result.status.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+          final autoTimeKey = (result.statusDate?.millisecondsSinceEpoch ?? 0).toString();
+          await _diagStep(
+            'S3 history set(merge) new_auto_${autoStatusKey}_$autoTimeKey',
+            () => orderRef.collection('lcsStatusHistory')
+                .doc('new_auto_${autoStatusKey}_$autoTimeKey')
+                .set({
+              // NOTE: was cnController.text.trim(); now the same uppercase `cn`
+              // stored on the order, because the rule compares it with order.cn.
+              'cn': cn,
+              'previousStatus': 'Pending API Sync',
+              'status': result.status.trim(),
+              'source': 'new_order_auto_sync',
+              'activityDate': result.statusDate == null
+                  ? Timestamp.now()
+                  : Timestamp.fromDate(result.statusDate!),
+              'recordedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true)),
+          );
+        }
+      } catch (e) {
+        syncWarning = 'Order save ho gaya, lekin LCS auto-sync nahi hua.\n$e';
+      }
+
+      if (!mounted) return;
+      navigator.pop();
+      if (syncWarning != null) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(syncWarning), duration: const Duration(seconds: 8)),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      await _diagShow(
+        committed ? 'Order SAVE ho chuka (batch OK), baad ka step fail' : 'Order save nahi hua',
+        '$e\n\n--- preflight ---\n$preflight',
+      );
+    }
+  }
+
+  Future<void> save() async {
+    if (_saving) return; // repeated taps ignored
+    setState(() => _saving = true);
+    try {
+      if (_bulkReceiptDrafts.length > 1) {
+        await _saveBulkReceiptOrders();
+        return;
+      }
+      await _saveSingleOrder();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+
+// ----------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottom + 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 45,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Add New Order',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.document_scanner_rounded,
+                        color: Color(0xFF1769E0),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Scan LCS Receipt',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '1–20 receipts select karein. App CN, COD, customer, destination aur Book Date read karke fields fill karegi.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _pickReceiptImages,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Gallery'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _ocrLoading ? null : _takeReceiptPhoto,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('Camera'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_ocrLoading) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (_ocrMessage.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _ocrMessage,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (_receiptImages.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_receiptImages.length} image(s) selected — fields neeche review karein.',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1769E0),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            _field(
+              controller: customerController,
+              label: 'Customer Name',
+              icon: Icons.person_outline_rounded,
+            ),
+
+            _field(
+              controller: customerPhoneController,
+              label: 'Customer Contact Number',
+              icon: Icons.phone_outlined,
+              keyboardType: TextInputType.phone,
+            ),
+
+            _field(
+              controller: cnController,
+              label: 'LCS CN Number',
+              icon: Icons.qr_code_2_rounded,
+            ),
+
+            _field(
+              controller: productController,
+              label: 'Product',
+              icon: Icons.shopping_bag_outlined,
+            ),
+
+            _field(
+              controller: amountController,
+              label: 'COD Amount',
+              icon: Icons.payments_outlined,
+              keyboardType: TextInputType.number,
+            ),
+
+            _field(
+              controller: destinationController,
+              label: 'Destination',
+              icon: Icons.location_on_outlined,
+            ),
+
+            _field(
+              controller: bookingDateController,
+              label: 'Booking Date',
+              icon: Icons.calendar_today_outlined,
+              readOnly: true,
+              onTap: _pickBookingDate,
+            ),
+
+            _field(
+              controller: workerController,
+              label: 'Worker Name',
+              icon: Icons.person_outline_rounded,
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF087A46).withOpacity(.06),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF087A46).withOpacity(.12),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.sync_rounded, color: Color(0xFF1769E0)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'LCS Status: API se automatically update hoga. Manual status selection disabled hai.',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton.icon(
+                onPressed: _saving ? null : save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_rounded),
+                label: Text(
+                  _saving ? 'Saving...' : 'Add Order',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF087A46),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+}
+
+}
+).hasMatch(username)) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username 3-30 characters ka ho; letters, numbers, dot, _ ya - use karein.')));
+      return;
+    }
+    await _callAdminFunction('adminUpdateWorkerUsername', {'uid': uid, 'username': username}, 'Username updated.');
+  }
+
+  Future<void> resetWorkerPassword(String uid, String username) async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Reset Worker Password'),
+      content: TextField(controller: controller, autofocus: true, obscureText: true, decoration: const InputDecoration(labelText: 'Temporary password (8+ characters)')),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Reset password'))],
+    ));
+    final password = controller.text;
+    controller.dispose();
+    if (confirmed != true) return;
+    if (password.length < 8) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password kam az kam 8 characters ka hona chahiye.')));
+      return;
+    }
+    await _callAdminFunction('adminResetWorkerPassword', {'uid': uid, 'password': password}, 'Password reset ho gaya for @$username.');
+  }
+
+  Future<void> deleteWorkerAccount(String uid, String name, String username) async {
+    final confirmed = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Delete Worker Account?'),
+      content: Text('Worker "$name" (@$username) ka login aur profile permanently delete hoga. Existing order history preserve rahegi. Ye action undo nahi ho sakta.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.pop(d, true), child: const Text('Delete account'))],
+    ));
+    if (confirmed != true) return;
+    await _callAdminFunction('adminDeleteWorker', {'uid': uid}, 'Worker account deleted; order history preserved.');
   }
 
   Future<void> toggleWorker(String uid, bool active) async {
