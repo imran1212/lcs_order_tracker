@@ -66,8 +66,20 @@ jobs:
 
       - name: Verify APK and AAB signatures
         run: |
-          jarsigner -verify -verbose -certs build/app/outputs/bundle/release/app-release.aab
-          apksigner verify --verbose build/app/outputs/flutter-apk/app-release.apk
+          set -euo pipefail
+          ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$ANDROID_SDK_ROOT" ]; then
+            echo "::error::Android SDK path is not configured on this runner."
+            exit 1
+          fi
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner was not found under $ANDROID_SDK_ROOT/build-tools. Install Android SDK Build-Tools."
+            exit 1
+          fi
+          echo "Using Android signature verifier: $APKSIGNER"
+          jarsigner -verify build/app/outputs/bundle/release/app-release.aab
+          "$APKSIGNER" verify --verbose build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK and AAB test artifacts
         uses: actions/upload-artifact@v4
