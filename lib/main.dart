@@ -3387,7 +3387,12 @@ class _AdminScreenState extends State<AdminScreen> {
     final name = controller.text.trim();
     controller.dispose();
     if (confirmed != true || name.isEmpty) return;
-    await _callAdminFunction('adminUpdateWorkerName', {'uid': uid, 'name': name}, 'Worker name updated.');
+    try {
+      await users.doc(uid).update({'name': name});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Worker name updated.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Name update failed: $e')));
+    }
   }
 
   Future<void> _callAdminFunction(String functionName, Map<String, dynamic> data, String successMessage) async {
