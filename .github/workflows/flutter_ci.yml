@@ -41,13 +41,26 @@ jobs:
             echo "::error::Missing existing AQAS upload signing secrets. Check repository Settings > Secrets and variables > Actions."
             exit 1
           fi
-          echo "$AQAS_UPLOAD_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          set -euo pipefail
+          if ! printf '%s' "$AQAS_UPLOAD_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks; then
+            echo "::error::AQAS_UPLOAD_KEYSTORE_BASE64 is not valid base64."
+            exit 1
+          fi
+          if [ ! -s android/upload-keystore.jks ]; then
+            echo "::error::Decoded upload keystore is empty."
+            exit 1
+          fi
+          if ! keytool -list -keystore android/upload-keystore.jks -storepass "$AQAS_UPLOAD_STORE_PASSWORD" -alias "$AQAS_UPLOAD_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::Upload keystore, store password, or key alias is invalid. Secret values were not printed."
+            exit 1
+          fi
           cat > android/key.properties <<EOF
           storeFile=upload-keystore.jks
           storePassword=$AQAS_UPLOAD_STORE_PASSWORD
           keyAlias=$AQAS_UPLOAD_KEY_ALIAS
           keyPassword=$AQAS_UPLOAD_KEY_PASSWORD
           EOF
+          echo "Upload keystore decoded and configured; key material was not printed."
 
       - name: Resolve dependencies
         run: flutter pub get
