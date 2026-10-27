@@ -40,13 +40,12 @@ void lcsBackgroundCallbackDispatcher() {
       final query = await FirebaseFirestore.instance
           .collection('orders')
           .where('workerUid', isEqualTo: user.uid)
+          .limit(10)
           .get();
-      final processedCns = <String>{};
       for (final doc in query.docs) {
         final data = doc.data();
         final cn = (data['cn'] ?? '').toString().trim();
         if (cn.isEmpty) continue;
-        final cnKey = cn.toUpperCase();
         final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
         final isDelivered = (currentStatus.contains('delivered') &&
                 !currentStatus.contains('undelivered')) ||
@@ -55,7 +54,7 @@ void lcsBackgroundCallbackDispatcher() {
         final isReturned = normalizedStatus.contains('return') ||
             normalizedStatus == 'rts' ||
             normalizedStatus.contains('collected');
-        if (isDelivered || isReturned || !processedCns.add(cnKey)) continue;
+        if (isDelivered || isReturned) continue;
         final lastSyncRaw = data['lastApiSyncAt'];
         if (lastSyncRaw is Timestamp &&
             DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
@@ -1436,27 +1435,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-
-    // Queue a native Android one-off job first. If the UI process is killed or
-    // the app is minimized, WorkManager can resume API sync outside this screen.
-    if (Platform.isAndroid) {
-      try {
-        await Workmanager().registerOneOffTask(
-          'lcs-order-auto-sync-on-demand',
-          _lcsBackgroundSyncTask,
-          existingWorkPolicy: ExistingWorkPolicy.replace,
-          constraints: Constraints(networkType: NetworkType.connected),
-        );
-      } catch (error) {
-        debugPrint('LCS one-off background sync enqueue failed: $error');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Background queue schedule nahi hui: $error')),
-          );
-        }
-      }
-    }
-    if (!mounted) return;
     setState(() { _bulkSyncingOrders = true; _bulkSyncCompleted = 0; _bulkSyncTotal = targets.length; });
     var succeeded = 0;
     var failed = 0;
@@ -4963,90 +4941,31 @@ Future<void> _loadWorkerName() async {
       final normalizedCns = <String>{};
       for (final draft in valid) {
         final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
-        if (!RegExp(r'^[A-Z0-9._-]{1,100}
-
-      final batch = FirebaseFirestore.instance.batch();
-      final ordersCollection = FirebaseFirestore.instance.collection('orders');
-      final registryCollection = FirebaseFirestore.instance.collection('cnRegistry');
-      for (final draft in valid) {
-        final ref = ordersCollection.doc();
-        final date = draft['bookingDate'] as DateTime? ?? DateTime.now();
-        final cn = (draft['cn'] ?? '').toString().trim().toUpperCase();
-        batch.set(ref, {
-          'customer': (draft['customer'] ?? '').toString().trim(),
-          'customerPhone': (draft['customerPhone'] ?? '').toString().trim(),
-          'cn': cn,
-          'product': (draft['product'] ?? '').toString().trim().isEmpty ? 'Not specified' : (draft['product'] ?? '').toString().trim(),
-          'amount': double.tryParse((draft['amount'] ?? '').toString().replaceAll(',', '')) ?? 0,
-          'status': 'Pending API Sync',
-          'destination': (draft['destination'] ?? '').toString().trim(),
-          'workerName': workerController.text.trim(),
-          'workerUid': widget.workerUid,
-          'bookingDate': Timestamp.fromDate(date),
-          'statusDate': null,
-          'deliveryDate': null,
-          'receiptUrls': <String>[],
-          'receiptCount': 1,
-          'receiptUploadStatus': 'temporary_only',
-          'receiptImageName': (draft['imagePath'] ?? '').toString(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        if (!existingRegistryCns.contains(cn)) {
-          existingRegistryCns.add(cn);
-          batch.set(registryCollection.doc(cn), {
-            'cn': cn,
-            'orderId': ref.id,
-            'workerUid': widget.workerUid,
-            'createdBy': currentUser.uid,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-        batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
-          'cn': cn,
-          'previousStatus': '',
-          'status': 'Pending API Sync',
-          'source': 'bulk_receipt_import',
-          'activityDate': Timestamp.fromDate(date),
-          'recordedAt': FieldValue.serverTimestamp(),
-        });
-      }
-      await _diagStep(
-        'B1 batch.commit BULK (${valid.length} orders, ${valid.length * 3} writes)',
-        () => batch.commit(),
-      );
-      if (!mounted) return;
-      final skipped = _bulkReceiptDrafts.length - valid.length;
-      navigator.pop();
-      messenger.showSnackBar(
-        SnackBar(content: Text('${valid.length} order(s) saved from receipts. ${skipped > 0 ? '$skipped receipt(s) skipped because CN was not detected.' : 'LCS status sync can be run from each order.'}'), duration: const Duration(seconds: 6)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      await _diagShow('Bulk orders save nahi huay', '$e\n\n--- preflight ---\n$preflight');
-    }
-  }
-
-
-// ----------------------------------------------------------------------
-
-).hasMatch(cn)) {
+        if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
           throw Exception('Invalid CN: $cn');
         }
-        normalizedCns.add(cn);
+        if (!normalizedCns.add(cn)) throw Exception('Bulk receipts mein duplicate CN hai: $cn');
       }
 
       preflight = await _diagPreflight();
 
-      // Existing CNs are now allowed as separate order records. Keep the
-      // registry pointer stable for the first record instead of overwriting it.
-      final existingRegistryCns = <String>{};
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      final alreadyReserved = <String>[];
       for (final cn in normalizedCns) {
         final regSnap = await _diagStep(
           'R1 read cnRegistry/$cn',
           () => FirebaseFirestore.instance.collection('cnRegistry').doc(cn).get(),
         );
-        if (regSnap.exists) existingRegistryCns.add(cn);
+        if (regSnap.exists) {
+          alreadyReserved.add('$cn (orderId: ${regSnap.data()?['orderId']})');
+        }
+      }
+      if (alreadyReserved.isNotEmpty) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'Ye CN registry mein pehle se maujood hain:\n${alreadyReserved.join('\n')}\n\nKoi order save nahi kiya.',
+        );
+        return;
       }
 
       final batch = FirebaseFirestore.instance.batch();
@@ -5140,9 +5059,15 @@ Future<void> _loadWorkerName() async {
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
       final registryRef = FirebaseFirestore.instance.collection('cnRegistry').doc(cn);
 
-      // Existing CNs may be saved as separate order records. Do not overwrite
-      // the canonical registry pointer when one already exists.
+      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
       final regSnap = await _diagStep('R1 read cnRegistry/$cn', () => registryRef.get());
+      if (regSnap.exists) {
+        await _diagShow(
+          'CN pehle se saved hai',
+          'CN $cn registry mein pehle se maujood hai (orderId: ${regSnap.data()?['orderId']}). Naya order save nahi kiya.',
+        );
+        return;
+      }
 
       final batch = FirebaseFirestore.instance.batch();
 
@@ -5166,15 +5091,13 @@ Future<void> _loadWorkerName() async {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      if (!regSnap.exists) {
-        batch.set(registryRef, {
-          'cn': cn,
-          'orderId': orderRef.id,
-          'workerUid': widget.workerUid,
-          'createdBy': currentUser.uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
+      batch.set(registryRef, {
+        'cn': cn,
+        'orderId': orderRef.id,
+        'workerUid': widget.workerUid,
+        'createdBy': currentUser.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
       batch.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
         'cn': cn,
