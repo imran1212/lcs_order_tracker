@@ -4944,28 +4944,20 @@ Future<void> _loadWorkerName() async {
         if (!RegExp(r'^[A-Z0-9._-]{1,100}$').hasMatch(cn)) {
           throw Exception('Invalid CN: $cn');
         }
-        if (!normalizedCns.add(cn)) throw Exception('Bulk receipts mein duplicate CN hai: $cn');
+        normalizedCns.add(cn);
       }
 
       preflight = await _diagPreflight();
 
-      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
-      final alreadyReserved = <String>[];
+      // Existing CNs are allowed as separate records. Preserve the original
+      // cnRegistry owner and only create a pointer for CNs not yet registered.
+      final existingRegistryCns = <String>{};
       for (final cn in normalizedCns) {
         final regSnap = await _diagStep(
           'R1 read cnRegistry/$cn',
           () => FirebaseFirestore.instance.collection('cnRegistry').doc(cn).get(),
         );
-        if (regSnap.exists) {
-          alreadyReserved.add('$cn (orderId: ${regSnap.data()?['orderId']})');
-        }
-      }
-      if (alreadyReserved.isNotEmpty) {
-        await _diagShow(
-          'CN pehle se saved hai',
-          'Ye CN registry mein pehle se maujood hain:\n${alreadyReserved.join('\n')}\n\nKoi order save nahi kiya.',
-        );
-        return;
+        if (regSnap.exists) existingRegistryCns.add(cn);
       }
 
       final batch = FirebaseFirestore.instance.batch();
@@ -4995,13 +4987,16 @@ Future<void> _loadWorkerName() async {
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
-        batch.set(registryCollection.doc(cn), {
-          'cn': cn,
-          'orderId': ref.id,
-          'workerUid': widget.workerUid,
-          'createdBy': currentUser.uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        if (!existingRegistryCns.contains(cn)) {
+          existingRegistryCns.add(cn);
+          batch.set(registryCollection.doc(cn), {
+            'cn': cn,
+            'orderId': ref.id,
+            'workerUid': widget.workerUid,
+            'createdBy': currentUser.uid,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
         batch.set(ref.collection('lcsStatusHistory').doc('order_created_pending'), {
           'cn': cn,
           'previousStatus': '',
@@ -5059,15 +5054,9 @@ Future<void> _loadWorkerName() async {
       final orderRef = FirebaseFirestore.instance.collection('orders').doc();
       final registryRef = FirebaseFirestore.instance.collection('cnRegistry').doc(cn);
 
-      // R1: duplicate-CN pre-check (read only; rules still enforce uniqueness).
+      // Existing CNs are allowed as separate order records. Preserve the
+      // canonical registry pointer when it already exists.
       final regSnap = await _diagStep('R1 read cnRegistry/$cn', () => registryRef.get());
-      if (regSnap.exists) {
-        await _diagShow(
-          'CN pehle se saved hai',
-          'CN $cn registry mein pehle se maujood hai (orderId: ${regSnap.data()?['orderId']}). Naya order save nahi kiya.',
-        );
-        return;
-      }
 
       final batch = FirebaseFirestore.instance.batch();
 
@@ -5091,13 +5080,15 @@ Future<void> _loadWorkerName() async {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      batch.set(registryRef, {
-        'cn': cn,
-        'orderId': orderRef.id,
-        'workerUid': widget.workerUid,
-        'createdBy': currentUser.uid,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      if (!regSnap.exists) {
+        batch.set(registryRef, {
+          'cn': cn,
+          'orderId': orderRef.id,
+          'workerUid': widget.workerUid,
+          'createdBy': currentUser.uid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       batch.set(orderRef.collection('lcsStatusHistory').doc('order_created_pending'), {
         'cn': cn,
