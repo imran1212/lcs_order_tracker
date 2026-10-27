@@ -40,7 +40,6 @@ void lcsBackgroundCallbackDispatcher() {
       final query = await FirebaseFirestore.instance
           .collection('orders')
           .where('workerUid', isEqualTo: user.uid)
-          .limit(10)
           .get();
       for (final doc in query.docs) {
         final data = doc.data();
@@ -1310,6 +1309,141 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+
+  Future<void> _runDuplicateCheck(List<OrderData> allOrders) async {
+    if (!isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Duplicate Check sirf admin chala sakta hai.')),
+      );
+      return;
+    }
+    final groupsByCn = <String, List<OrderData>>{};
+    for (final order in allOrders) {
+      final key = order.cn.trim().toUpperCase();
+      if (key.isEmpty) continue;
+      (groupsByCn[key] ??= <OrderData>[]).add(order);
+    }
+    final groups = groupsByCn.entries.where((e) => e.value.length > 1).toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    if (groups.isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Duplicate SR/CN nahi mila. Tamam saved records scan ho gaye.')),
+      );
+      return;
+    }
+    final selectedForDelete = <String>{};
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text('Duplicate Check • ${groups.length} matched SR/CN group(s)'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Saved records scan hue hain, Delivered/Returned samet. Checked records delete ke liye select honge. Har group mein kam az kam ek record unchecked rakhein.'),
+                const SizedBox(height: 12),
+                ...groups.map((group) {
+                  final records = group.value;
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${group.key} • ${records.length} records',
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                        const SizedBox(height: 6),
+                        ...records.map((order) {
+                          final checked = selectedForDelete.contains(order.id);
+                          final groupDeleteCount = records.where((r) => selectedForDelete.contains(r.id)).length;
+                          final canDelete = checked || groupDeleteCount < records.length - 1;
+                          final date = order.bookingDate == null ? 'Date unavailable' : _formatDateTime(order.bookingDate!);
+                          return CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: checked,
+                            onChanged: canDelete ? (value) {
+                              setDialogState(() {
+                                if (value == true) { selectedForDelete.add(order.id); }
+                                else { selectedForDelete.remove(order.id); }
+                              });
+                            } : null,
+                            title: Text('${order.customer.isEmpty ? 'Unknown customer' : order.customer} • ${order.status}',
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                            subtitle: Text('CN: ${order.cn} | Date: $date\nID: ${order.id}',
+                              style: const TextStyle(fontSize: 10)),
+                            controlAffinity: ListTileControlAffinity.leading,
+                          );
+                        }),
+                      ]),
+                    ),
+                  );
+                }),
+                const Text('Delete permanently hota hai. Confirm karne se pehle selection dobara check karein.',
+                  style: TextStyle(color: Colors.red, fontSize: 12)),
+              ],
+            )),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: selectedForDelete.isEmpty ? null : () => Navigator.pop(dialogContext, true),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: Text('Delete selected (${selectedForDelete.length})'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || selectedForDelete.isEmpty || !mounted) return;
+    final ids = Set<String>.from(selectedForDelete);
+    final db = FirebaseFirestore.instance;
+    try {
+      for (final id in ids) {
+        final history = await db.collection('orders').doc(id).collection('lcsStatusHistory').get();
+        for (var start = 0; start < history.docs.length; start += 400) {
+          final batch = db.batch();
+          for (final historyDoc in history.docs.skip(start).take(400)) {
+            batch.delete(historyDoc.reference);
+          }
+          await batch.commit();
+        }
+      }
+      final idList = ids.toList();
+      for (var start = 0; start < idList.length; start += 400) {
+        final batch = db.batch();
+        final end = (start + 400 < idList.length) ? start + 400 : idList.length;
+        for (final id in idList.sublist(start, end)) {
+          batch.delete(db.collection('orders').doc(id));
+        }
+        await batch.commit();
+      }
+      for (final group in groups) {
+        if (!group.value.any((order) => ids.contains(order.id))) continue;
+        final survivor = group.value.where((order) => !ids.contains(order.id)).first;
+        final registryRef = db.collection('cnRegistry').doc(group.key);
+        final registry = await registryRef.get();
+        final pointedId = (registry.data()?['orderId'] ?? '').toString();
+        if (registry.exists && ids.contains(pointedId)) {
+          await registryRef.set({
+            'cn': group.key, 'orderId': survivor.id, 'workerUid': survivor.workerUid,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${ids.length} selected duplicate record(s) deleted.')),
+      );
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Duplicate deletion failed: $error')),
+      );
+    }
+  }
+
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
     if (_bulkSyncingOrders) return;
 
@@ -1325,98 +1459,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       (targetsByCn[key] ??= <OrderData>[]).add(order);
     }
 
-    final duplicateGroups = targetsByCn.entries
-        .where((entry) => entry.value.length > 1)
-        .toList();
-    var removeDuplicateIds = <String>{};
-    if (duplicateGroups.isNotEmpty && isAdmin) {
-      final duplicateCount = duplicateGroups.fold<int>(
-          0, (sum, entry) => sum + entry.value.length - 1);
-      final confirmedCleanup = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text('Duplicate SR/CN found • $duplicateCount extra record(s)'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Har SR/CN ki latest saved entry rakhi jayegi. Extra order records delete honge. Delete se pehle confirm karein.'),
-                  const SizedBox(height: 12),
-                  ...duplicateGroups.map((entry) {
-                    final sorted = List<OrderData>.from(entry.value);
-                    // Orders arrive newest-first from the dashboard stream.
-                    final keep = sorted.first;
-                    final remove = sorted.skip(1).toList();
-                    removeDuplicateIds.addAll(remove.map((order) => order.id));
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(
-                        '${entry.key}: keep ${keep.id}; remove ${remove.length} duplicate(s)',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 4),
-                  const Text('Yeh action order documents delete karega. Isay undo nahi kiya ja sakta.', style: TextStyle(color: Colors.red, fontSize: 12)),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Confirm cleanup'),
-            ),
-          ],
-        ),
-      );
-      if (confirmedCleanup != true || !mounted) return;
-
-      try {
-        final db = FirebaseFirestore.instance;
-        final deleteIds = removeDuplicateIds.toList();
-        for (var start = 0; start < deleteIds.length; start += 400) {
-          final batch = db.batch();
-          final end = (start + 400 < deleteIds.length) ? start + 400 : deleteIds.length;
-          for (final id in deleteIds.sublist(start, end)) {
-            batch.delete(db.collection('orders').doc(id));
-          }
-          await batch.commit();
-        }
-
-        // Repair cnRegistry pointers only when they point to a deleted duplicate.
-        for (final entry in duplicateGroups) {
-          final keep = entry.value.first;
-          final registryRef = db.collection('cnRegistry').doc(entry.key);
-          final registry = await registryRef.get();
-          if (registry.exists && removeDuplicateIds.contains((registry.data()?['orderId'] ?? '').toString())) {
-            await registryRef.set({
-              'cn': entry.key,
-              'orderId': keep.id,
-              'workerUid': keep.workerUid,
-              'updatedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
-          }
-        }
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${deleteIds.length} duplicate order record(s) removed.')),
-        );
-      } catch (error) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Duplicate cleanup failed: $error')),
-        );
-        return;
-      }
-    }
-
-    // Build the sync queue from the original list after duplicate cleanup.
     final targets = targetsByCn.entries.toList();
     if (targets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')));
@@ -1440,11 +1482,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     var failed = 0;
     try {
       for (final entry in targets) {
-        final activeOrders = entry.value.where((order) => !removeDuplicateIds.contains(order.id)).toList();
-        if (activeOrders.isEmpty) {
-          if (mounted) setState(() => _bulkSyncCompleted++);
-          continue;
-        }
+        final activeOrders = entry.value;
         final cn = activeOrders.first.cn.trim();
         try {
           final result = await LcsApiService.syncCn(cn);
@@ -1905,6 +1943,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 _statsRow(orders),
                 const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _runDuplicateCheck(
+                      docs.map((doc) => OrderData.fromFirestore(doc)).toList(),
+                    ),
+                    icon: const Icon(Icons.content_copy_rounded),
+                    label: const Text('Duplicate Check (All Saved Records)'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFB45309),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Color(0xFFD97706)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
