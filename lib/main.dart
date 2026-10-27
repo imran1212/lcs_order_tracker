@@ -33,14 +33,27 @@ void lcsBackgroundCallbackDispatcher() {
         }
       }
       if (user == null) {
-        debugPrint('LCS background sync skipped: no signed-in user.');
-        return true;
+        debugPrint('LCS background sync retry: no signed-in user in background isolate.');
+        return false;
       }
 
-      final query = await FirebaseFirestore.instance
-          .collection('orders')
-          .where('workerUid', isEqualTo: user.uid)
+      // Admin accounts must scan all orders; workers may only scan their own.
+      final profile = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
           .get();
+      if (!profile.exists || profile.data()?.get('active', false) != true) {
+        debugPrint('LCS background sync retry: user profile is missing or inactive.');
+        return false;
+      }
+      final isAdminUser = profile.data()?.get('role', '') == 'admin';
+      final query = isAdminUser
+          ? await FirebaseFirestore.instance.collection('orders').get()
+          : await FirebaseFirestore.instance
+              .collection('orders')
+              .where('workerUid', isEqualTo: user.uid)
+              .get();
+      var hadFailures = false;
       for (final doc in query.docs) {
         final data = doc.data();
         final cn = (data['cn'] ?? '').toString().trim();
@@ -86,10 +99,13 @@ void lcsBackgroundCallbackDispatcher() {
             }, SetOptions(merge: true));
           }
         } catch (error) {
+          hadFailures = true;
           debugPrint('LCS background sync failed for order ${doc.id}: $error');
         }
       }
-      return true;
+      // WorkManager retries failed jobs. Successful orders have lastApiSyncAt,
+      // so they will be skipped on retry while failed orders get another attempt.
+      return !hadFailures;
     } catch (error) {
       debugPrint('LCS background sync task failed: $error');
       return false;
