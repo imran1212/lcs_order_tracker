@@ -47,7 +47,6 @@ void lcsBackgroundCallbackDispatcher() {
         final cn = (data['cn'] ?? '').toString().trim();
         if (cn.isEmpty) continue;
         final cnKey = cn.toUpperCase();
-        if (!processedCns.add(cnKey)) continue;
         final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
         final isDelivered = (currentStatus.contains('delivered') &&
                 !currentStatus.contains('undelivered')) ||
@@ -56,7 +55,7 @@ void lcsBackgroundCallbackDispatcher() {
         final isReturned = normalizedStatus.contains('return') ||
             normalizedStatus == 'rts' ||
             normalizedStatus.contains('collected');
-        if (isDelivered || isReturned) continue;
+        if (isDelivered || isReturned || !processedCns.add(cnKey)) continue;
         final lastSyncRaw = data['lastApiSyncAt'];
         if (lastSyncRaw is Timestamp &&
             DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
