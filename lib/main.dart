@@ -100,19 +100,37 @@ final ValueNotifier<int> appPaletteIndex = ValueNotifier<int>(0);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
-  appPaletteIndex.value = prefs.getInt('aqas_palette_index') ?? 0;
-  await Firebase.initializeApp();
-  await Workmanager().initialize(lcsBackgroundCallbackDispatcher);
-  if (Platform.isAndroid) {
-    await Workmanager().registerPeriodicTask(
-      'lcs-order-auto-sync-periodic',
-      _lcsBackgroundSyncTask,
-      frequency: const Duration(minutes: 15),
-      constraints: Constraints(networkType: NetworkType.connected),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
-    );
+
+  // Theme preference is optional and must never prevent the app from opening.
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    appPaletteIndex.value = prefs.getInt('aqas_palette_index') ?? 0;
+  } catch (error, stackTrace) {
+    debugPrint('LCS startup: SharedPreferences failed: $error');
+    debugPrintStack(stackTrace: stackTrace);
   }
+
+  // Firebase is required for login and order data; keep this explicit.
+  await Firebase.initializeApp();
+
+  // Background sync is optional. A Workmanager setup error should not crash
+  // the foreground tracking app during startup.
+  if (Platform.isAndroid) {
+    try {
+      await Workmanager().initialize(lcsBackgroundCallbackDispatcher);
+      await Workmanager().registerPeriodicTask(
+        'lcs-order-auto-sync-periodic',
+        _lcsBackgroundSyncTask,
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('LCS startup: Workmanager setup failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   runApp(const LcsOrderTrackerApp());
 }
 
