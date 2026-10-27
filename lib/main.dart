@@ -42,11 +42,11 @@ void lcsBackgroundCallbackDispatcher() {
           .collection('users')
           .doc(user.uid)
           .get();
-      if (!profile.exists || profile.data()?.get('active', false) != true) {
+      if (!profile.exists || profile.data()?['active'] != true) {
         debugPrint('LCS background sync retry: user profile is missing or inactive.');
         return false;
       }
-      final isAdminUser = profile.data()?.get('role', '') == 'admin';
+      final isAdminUser = profile.data()?['role'] == 'admin';
       final query = isAdminUser
           ? await FirebaseFirestore.instance.collection('orders').get()
           : await FirebaseFirestore.instance
