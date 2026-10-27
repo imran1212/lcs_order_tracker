@@ -50,7 +50,11 @@ void lcsBackgroundCallbackDispatcher() {
         final isDelivered = (currentStatus.contains('delivered') &&
                 !currentStatus.contains('undelivered')) ||
             currentStatus == 'delivery completed';
-        if (isDelivered) continue;
+        final normalizedStatus = currentStatus;
+        final isReturned = normalizedStatus.contains('return') ||
+            normalizedStatus == 'rts' ||
+            normalizedStatus.contains('collected');
+        if (isDelivered || isReturned) continue;
         final lastSyncRaw = data['lastApiSyncAt'];
         if (lastSyncRaw is Timestamp &&
             DateTime.now().difference(lastSyncRaw.toDate()) < const Duration(minutes: 15)) {
@@ -1310,8 +1314,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_bulkSyncingOrders) return;
     final targetsByCn = <String, List<OrderData>>{};
     for (final order in allOrders) {
+      final category = classifyLcsDashboardStatus(order.status);
       if (order.cn.trim().isEmpty ||
-          classifyLcsDashboardStatus(order.status) == LcsDashboardStatusCategory.delivered) {
+          category == LcsDashboardStatusCategory.delivered ||
+          category == LcsDashboardStatusCategory.returned) {
         continue;
       }
       final key = order.cn.trim().toUpperCase();
@@ -1326,7 +1332,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Sync all active tracking numbers?'),
-        content: Text('${targets.length} unique tracking number(s) sync honge. Delivered orders skip honge; duplicate CN ek hi dafa sync hoga.'),
+        content: Text('${targets.length} unique tracking number(s) sync honge. Delivered aur Returned orders skip honge; duplicate CN ek hi dafa sync hoga.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Start Sync')),
@@ -1339,7 +1345,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     var failed = 0;
     try {
       for (final entry in targets) {
-        if (!mounted) break;
         final duplicateOrders = entry.value;
         final cn = duplicateOrders.first.cn.trim();
         try {
@@ -1375,7 +1380,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } finally {
       if (mounted) {
         setState(() => _bulkSyncingOrders = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('LCS sync complete: ${succeeded} tracking number(s) synced, ${failed} failed. Delivered orders skipped.')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('LCS sync complete: ${succeeded} tracking number(s) synced, ${failed} failed. Delivered aur Returned orders skipped.')));
       }
     }
   }
