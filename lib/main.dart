@@ -1312,6 +1312,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _syncAllNonDeliveredOrders(List<OrderData> allOrders) async {
     if (_bulkSyncingOrders) return;
+
     final targetsByCn = <String, List<OrderData>>{};
     for (final order in allOrders) {
       final category = classifyLcsDashboardStatus(order.status);
@@ -1323,11 +1324,105 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final key = order.cn.trim().toUpperCase();
       (targetsByCn[key] ??= <OrderData>[]).add(order);
     }
+
+    final duplicateGroups = targetsByCn.entries
+        .where((entry) => entry.value.length > 1)
+        .toList();
+    var removeDuplicateIds = <String>{};
+    if (duplicateGroups.isNotEmpty && isAdmin) {
+      final duplicateCount = duplicateGroups.fold<int>(
+          0, (sum, entry) => sum + entry.value.length - 1);
+      final confirmedCleanup = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Duplicate SR/CN found • $duplicateCount extra record(s)'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Har SR/CN ki latest saved entry rakhi jayegi. Extra order records delete honge. Delete se pehle confirm karein.'),
+                  const SizedBox(height: 12),
+                  ...duplicateGroups.map((entry) {
+                    final sorted = List<OrderData>.from(entry.value);
+                    // Orders arrive newest-first from the dashboard stream.
+                    final keep = sorted.first;
+                    final remove = sorted.skip(1).toList();
+                    removeDuplicateIds.addAll(remove.map((order) => order.id));
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        '${entry.key}: keep ${keep.id}; remove ${remove.length} duplicate(s)',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 4),
+                  const Text('Yeh action order documents delete karega. Isay undo nahi kiya ja sakta.', style: TextStyle(color: Colors.red, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Confirm cleanup'),
+            ),
+          ],
+        ),
+      );
+      if (confirmedCleanup != true || !mounted) return;
+
+      try {
+        final db = FirebaseFirestore.instance;
+        final deleteIds = removeDuplicateIds.toList();
+        for (var start = 0; start < deleteIds.length; start += 400) {
+          final batch = db.batch();
+          final end = (start + 400 < deleteIds.length) ? start + 400 : deleteIds.length;
+          for (final id in deleteIds.sublist(start, end)) {
+            batch.delete(db.collection('orders').doc(id));
+          }
+          await batch.commit();
+        }
+
+        // Repair cnRegistry pointers only when they point to a deleted duplicate.
+        for (final entry in duplicateGroups) {
+          final keep = entry.value.first;
+          final registryRef = db.collection('cnRegistry').doc(entry.key);
+          final registry = await registryRef.get();
+          if (registry.exists && removeDuplicateIds.contains((registry.data()?['orderId'] ?? '').toString())) {
+            await registryRef.set({
+              'cn': entry.key,
+              'orderId': keep.id,
+              'workerUid': keep.workerUid,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
+        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${deleteIds.length} duplicate order record(s) removed.')),
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Duplicate cleanup failed: $error')),
+        );
+        return;
+      }
+    }
+
+    // Build the sync queue from the original list after duplicate cleanup.
     final targets = targetsByCn.entries.toList();
     if (targets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync ke liye koi non-delivered tracking number nahi mila.')));
       return;
     }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1345,11 +1440,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     var failed = 0;
     try {
       for (final entry in targets) {
-        final duplicateOrders = entry.value;
-        final cn = duplicateOrders.first.cn.trim();
+        final activeOrders = entry.value.where((order) => !removeDuplicateIds.contains(order.id)).toList();
+        if (activeOrders.isEmpty) {
+          if (mounted) setState(() => _bulkSyncCompleted++);
+          continue;
+        }
+        final cn = activeOrders.first.cn.trim();
         try {
           final result = await LcsApiService.syncCn(cn);
-          for (final order in duplicateOrders) {
+          for (final order in activeOrders) {
             final ref = FirebaseFirestore.instance.collection('orders').doc(order.id);
             await ref.update({
               'status': result.status,
