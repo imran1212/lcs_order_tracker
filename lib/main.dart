@@ -40,12 +40,14 @@ void lcsBackgroundCallbackDispatcher() {
       final query = await FirebaseFirestore.instance
           .collection('orders')
           .where('workerUid', isEqualTo: user.uid)
-          .limit(10)
           .get();
+      final processedCns = <String>{};
       for (final doc in query.docs) {
         final data = doc.data();
         final cn = (data['cn'] ?? '').toString().trim();
         if (cn.isEmpty) continue;
+        final cnKey = cn.toUpperCase();
+        if (!processedCns.add(cnKey)) continue;
         final currentStatus = (data['status'] ?? '').toString().toLowerCase().trim();
         final isDelivered = (currentStatus.contains('delivered') &&
                 !currentStatus.contains('undelivered')) ||
@@ -1435,6 +1437,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
+
+    // Queue a native Android one-off job first. If the UI process is killed or
+    // the app is minimized, WorkManager can resume API sync outside this screen.
+    if (Platform.isAndroid) {
+      try {
+        await Workmanager().registerOneOffTask(
+          'lcs-order-auto-sync-on-demand',
+          _lcsBackgroundSyncTask,
+          existingWorkPolicy: ExistingWorkPolicy.replace,
+          constraints: Constraints(networkType: NetworkType.connected),
+        );
+      } catch (error) {
+        debugPrint('LCS one-off background sync enqueue failed: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Background queue schedule nahi hui: $error')),
+          );
+        }
+      }
+    }
+    if (!mounted) return;
     setState(() { _bulkSyncingOrders = true; _bulkSyncCompleted = 0; _bulkSyncTotal = targets.length; });
     var succeeded = 0;
     var failed = 0;
